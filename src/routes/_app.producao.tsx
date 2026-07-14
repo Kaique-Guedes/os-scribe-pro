@@ -22,10 +22,11 @@ function ProducaoPage() {
     },
   });
 
-  const groups: Record<EtapaTipo, typeof data> = {
+  type Row = NonNullable<typeof data>[number];
+  const groups: Record<EtapaTipo, Row[]> = {
     abertura: [], solicitacao_material: [], chegada_material: [], pintura: [], entrega: [],
   };
-  (data ?? []).forEach(e => { groups[e.tipo].push(e); });
+  (data ?? []).forEach((e) => { groups[e.tipo as EtapaTipo].push(e); });
 
   return (
     <div className="p-6 space-y-4">

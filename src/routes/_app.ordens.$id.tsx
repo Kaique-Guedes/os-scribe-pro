@@ -41,7 +41,17 @@ function OsDetail() {
   });
   const { data: comentarios } = useQuery({
     queryKey: ["os-comentarios", id],
-    queryFn: async () => (await supabase.from("os_comentarios").select("*, profiles(nome)").eq("os_id", id).order("created_at",{ascending:false})).data ?? [],
+    queryFn: async () => {
+      const { data: rows } = await supabase.from("os_comentarios").select("*").eq("os_id", id).order("created_at",{ascending:false});
+      const list = rows ?? [];
+      const ids = Array.from(new Set(list.map(c => c.user_id)));
+      const profilesMap = new Map<string, string>();
+      if (ids.length) {
+        const { data: profs } = await supabase.from("profiles").select("id, nome").in("id", ids);
+        (profs ?? []).forEach(p => profilesMap.set(p.id, p.nome));
+      }
+      return list.map(c => ({ ...c, autor: profilesMap.get(c.user_id) ?? "Usuário" }));
+    },
   });
   const { data: clientes } = useQuery({
     queryKey: ["clientes-simple"],
@@ -56,7 +66,7 @@ function OsDetail() {
   const save = useMutation({
     mutationFn: async () => {
       if (Object.keys(edit).length === 0) return;
-      const { error } = await supabase.from("ordens_servico").update(edit).eq("id", id);
+      const { error } = await supabase.from("ordens_servico").update(edit as never).eq("id", id);
       if (error) throw error;
     },
     onSuccess: () => {
@@ -241,7 +251,7 @@ function OsDetail() {
                 {(comentarios ?? []).map(c => (
                   <li key={c.id} className="text-sm">
                     <div className="flex justify-between text-xs text-muted-foreground mb-0.5">
-                      <span className="font-medium text-foreground">{c.profiles?.nome ?? "Usuário"}</span>
+                      <span className="font-medium text-foreground">{c.autor}</span>
                       <span>{new Date(c.created_at).toLocaleString("pt-BR")}</span>
                     </div>
                     <p className="whitespace-pre-wrap">{c.texto}</p>
