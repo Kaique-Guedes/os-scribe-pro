@@ -1,0 +1,1 @@
+REVOKE EXECUTE ON FUNCTION public.grant_sartori_admin() FROM PUBLIC, anon, authenticated;
