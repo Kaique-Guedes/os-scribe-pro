@@ -52,8 +52,10 @@ function AuthPage() {
   return (
     <div className="min-h-screen grid lg:grid-cols-2">
       <div className="hidden lg:flex flex-col justify-between p-12 bg-primary text-primary-foreground">
-        <div className="flex items-center gap-3">
-          <div className="bg-white rounded-md p-2"><SartoriLogo className="h-10 w-auto" /></div>
+        <div className="flex items-center">
+          <div className="bg-white rounded-xl p-6 shadow-lg">
+            <SartoriLogo variant="transparent" className="h-24 w-auto" />
+          </div>
         </div>
         <div>
           <h1 className="text-4xl font-semibold leading-tight tracking-tight">Gestão de Ordens de Serviço</h1>
@@ -67,7 +69,7 @@ function AuthPage() {
       <div className="flex items-center justify-center p-6 bg-background">
         <Card className="w-full max-w-md shadow-[var(--shadow-elevated)]">
           <CardHeader>
-            <div className="lg:hidden mb-4"><SartoriLogo /></div>
+            <div className="lg:hidden mb-4 flex justify-center"><SartoriLogo variant="transparent" className="h-16 w-auto" /></div>
             <CardTitle>Acesso</CardTitle>
             <CardDescription>Entre com sua conta corporativa Sartori.</CardDescription>
           </CardHeader>
