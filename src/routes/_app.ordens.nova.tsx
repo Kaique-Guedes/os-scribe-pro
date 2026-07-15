@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -10,8 +10,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { OS_STATUS_LABEL, OS_STATUS_LIST, type OsStatus } from "@/lib/os-utils";
 import { toast } from "sonner";
-import { Upload, Sparkles, ArrowLeft } from "lucide-react";
+import { Upload, Sparkles, ArrowLeft, Loader2 } from "lucide-react";
 import type { TablesInsert } from "@/integrations/supabase/types";
+import { extractOsFromDocument } from "@/lib/os-extract.functions";
+import { useServerFn } from "@tanstack/react-start";
 
 export const Route = createFileRoute("/_app/ordens/nova")({
   head: () => ({ meta: [{ title: "Nova O.S. — Sartori Group" }] }),
