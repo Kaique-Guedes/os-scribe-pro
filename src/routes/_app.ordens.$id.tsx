@@ -14,7 +14,7 @@ import { OS_STATUS_LABEL, OS_STATUS_LIST, OS_STATUS_CLASS, ETAPA_LABEL, ETAPA_OR
 import { toast } from "sonner";
 import { ArrowLeft, CheckCircle2, Circle, MessageSquare, AlertTriangle, Save, Paperclip, Upload, Trash2, History, Download } from "lucide-react";
 import { useSession } from "@/hooks/use-auth";
-import { useRef } from "react";
+
 
 export const Route = createFileRoute("/_app/ordens/$id")({
   head: () => ({ meta: [{ title: "O.S. — Sartori Group" }] }),
