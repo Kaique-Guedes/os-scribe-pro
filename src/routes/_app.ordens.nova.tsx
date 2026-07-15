@@ -27,6 +27,9 @@ function NovaOsPage() {
   const qc = useQueryClient();
   const [form, setForm] = useState<FormState>({ status: "aberta" });
   const [novoCliente, setNovoCliente] = useState("");
+  const [extracting, setExtracting] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const extractFn = useServerFn(extractOsFromDocument);
 
   const { data: clientes } = useQuery({
     queryKey: ["clientes-simple"],
@@ -34,6 +37,61 @@ function NovaOsPage() {
   });
 
   const set = <K extends keyof FormState>(k: K, v: FormState[K]) => setForm(f => ({ ...f, [k]: v }));
+
+  async function handleFileUpload(file: File) {
+    if (file.size > 15 * 1024 * 1024) {
+      toast.error("Arquivo grande demais (máx 15MB)");
+      return;
+    }
+    setExtracting(true);
+    try {
+      const buf = await file.arrayBuffer();
+      let binary = "";
+      const bytes = new Uint8Array(buf);
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      const dataBase64 = btoa(binary);
+      const result = await extractFn({
+        data: { filename: file.name, mimeType: file.type || "application/pdf", dataBase64 },
+      });
+      // Pré-preenche apenas campos que a IA retornou
+      setForm(prev => {
+        const next: FormState = { ...prev };
+        const map: Array<[keyof FormState, unknown]> = [
+          ["numero_os", result.numero_os],
+          ["numero_ss", result.numero_ss],
+          ["numero_pedido", result.numero_pedido],
+          ["projeto", result.projeto],
+          ["solicitante", result.solicitante],
+          ["gestor", result.gestor],
+          ["orcamentista", result.orcamentista],
+          ["data_inicio_prev", result.data_inicio_prev],
+          ["data_entrega_prev", result.data_entrega_prev],
+          ["unidade", result.unidade],
+          ["quantidade", result.quantidade],
+          ["valor_unit", result.valor_unit],
+          ["valor_total", result.valor_total],
+          ["peso_kg", result.peso_kg],
+          ["local_entrega", result.local_entrega],
+          ["tipo_frete", result.tipo_frete],
+          ["descricao", result.descricao],
+          ["fora_escopo", result.fora_escopo],
+        ];
+        for (const [k, v] of map) if (v != null && v !== "") (next as Record<string, unknown>)[k as string] = v;
+        return next;
+      });
+      if (result.cliente_nome) {
+        const existing = (clientes ?? []).find(c => c.nome.toLowerCase() === result.cliente_nome!.toLowerCase());
+        if (existing) set("cliente_id", existing.id);
+        else setNovoCliente(result.cliente_nome);
+      }
+      toast.success("Dados extraídos! Revise antes de salvar.");
+    } catch (e) {
+      toast.error(`Falha na extração: ${(e as Error).message}`);
+    } finally {
+      setExtracting(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }
 
   const create = useMutation({
     mutationFn: async () => {
