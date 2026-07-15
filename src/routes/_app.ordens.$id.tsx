@@ -124,6 +124,7 @@ function OsDetail() {
       toast.success("O.S. atualizada.");
       qc.invalidateQueries({ queryKey: ["os", id] });
       qc.invalidateQueries({ queryKey: ["ordens"] });
+      qc.invalidateQueries({ queryKey: ["os-historico", id] });
       setEdit({});
     },
     onError: (e: Error) => toast.error(e.message),
