@@ -58,6 +58,56 @@ function OsDetail() {
     queryKey: ["clientes-simple"],
     queryFn: async () => (await supabase.from("clientes").select("id, nome").order("nome")).data ?? [],
   });
+  const { data: anexos } = useQuery({
+    queryKey: ["os-anexos", id],
+    queryFn: async () => (await supabase.from("os_anexos").select("*").eq("os_id", id).order("created_at", { ascending: false })).data ?? [],
+  });
+  const { data: historico } = useQuery({
+    queryKey: ["os-historico", id],
+    queryFn: async () => {
+      const { data: rows } = await supabase.from("os_historico").select("*").eq("os_id", id).order("created_at", { ascending: false });
+      const list = rows ?? [];
+      const ids = Array.from(new Set(list.map(h => h.user_id).filter(Boolean) as string[]));
+      const map = new Map<string, string>();
+      if (ids.length) {
+        const { data: profs } = await supabase.from("profiles").select("id, nome").in("id", ids);
+        (profs ?? []).forEach(p => map.set(p.id, p.nome));
+      }
+      return list.map(h => ({ ...h, autor: h.user_id ? (map.get(h.user_id) ?? "Usuário") : "Sistema" }));
+    },
+  });
+
+  const fileRef = useRef<HTMLInputElement>(null);
+  const uploadAnexo = useMutation({
+    mutationFn: async (file: File) => {
+      if (!user) throw new Error("Sem sessão");
+      const path = `${id}/${Date.now()}-${file.name.replace(/[^\w.\-]/g, "_")}`;
+      const { error: upErr } = await supabase.storage.from("os-files").upload(path, file, { contentType: file.type });
+      if (upErr) throw upErr;
+      const { error } = await supabase.from("os_anexos").insert({
+        os_id: id, storage_path: path, nome: file.name, mime_type: file.type, tamanho: file.size, uploaded_by: user.id,
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => { toast.success("Anexo enviado."); qc.invalidateQueries({ queryKey: ["os-anexos", id] }); },
+    onError: (e: Error) => toast.error(e.message),
+  });
+  const removeAnexo = useMutation({
+    mutationFn: async (anexo: { id: string; storage_path: string }) => {
+      await supabase.storage.from("os-files").remove([anexo.storage_path]);
+      const { error } = await supabase.from("os_anexos").delete().eq("id", anexo.id);
+      if (error) throw error;
+    },
+    onSuccess: () => { toast.success("Anexo removido."); qc.invalidateQueries({ queryKey: ["os-anexos", id] }); },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  async function downloadAnexo(path: string, nome: string) {
+    const { data, error } = await supabase.storage.from("os-files").createSignedUrl(path, 60);
+    if (error || !data) { toast.error(error?.message ?? "Falha"); return; }
+    const a = document.createElement("a");
+    a.href = data.signedUrl; a.download = nome; a.target = "_blank"; a.click();
+  }
 
   const [edit, setEdit] = useState<Record<string, unknown>>({});
   useEffect(() => { setEdit({}); }, [os?.id]);
