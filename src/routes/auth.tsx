@@ -69,7 +69,7 @@ function AuthPage() {
       <div className="flex items-center justify-center p-6 bg-background">
         <Card className="w-full max-w-md shadow-[var(--shadow-elevated)]">
           <CardHeader>
-            <div className="lg:hidden mb-4"><SartoriLogo /></div>
+            <div className="lg:hidden mb-4 flex justify-center"><SartoriLogo variant="transparent" className="h-16 w-auto" /></div>
             <CardTitle>Acesso</CardTitle>
             <CardDescription>Entre com sua conta corporativa Sartori.</CardDescription>
           </CardHeader>
