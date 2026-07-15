@@ -312,6 +312,67 @@ function OsDetail() {
               </ul>
             </CardContent>
           </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base flex items-center gap-2"><Paperclip className="h-4 w-4" />Anexos</CardTitle>
+              <CardDescription>PDFs, imagens, planilhas do pedido.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <input
+                ref={fileRef}
+                type="file"
+                className="hidden"
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) { uploadAnexo.mutate(f); e.target.value = ""; } }}
+              />
+              <Button size="sm" variant="outline" className="w-full gap-2" disabled={uploadAnexo.isPending} onClick={() => fileRef.current?.click()}>
+                <Upload className="h-4 w-4" />{uploadAnexo.isPending ? "Enviando..." : "Enviar arquivo"}
+              </Button>
+              <ul className="space-y-2 max-h-72 overflow-auto pr-1">
+                {(anexos ?? []).length === 0 && <li className="text-sm text-muted-foreground">Nenhum anexo.</li>}
+                {(anexos ?? []).map(a => (
+                  <li key={a.id} className="flex items-center gap-2 text-sm border rounded-md p-2">
+                    <Paperclip className="h-4 w-4 text-muted-foreground shrink-0" />
+                    <button className="flex-1 min-w-0 text-left hover:underline truncate" onClick={() => downloadAnexo(a.storage_path, a.nome)}>{a.nome}</button>
+                    <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => downloadAnexo(a.storage_path, a.nome)}><Download className="h-3.5 w-3.5" /></Button>
+                    <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => confirm("Remover anexo?") && removeAnexo.mutate({ id: a.id, storage_path: a.storage_path })}><Trash2 className="h-3.5 w-3.5" /></Button>
+                  </li>
+                ))}
+              </ul>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base flex items-center gap-2"><History className="h-4 w-4" />Histórico de versões</CardTitle>
+              <CardDescription>Auditoria de alterações da O.S.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ul className="space-y-3 max-h-96 overflow-auto pr-1">
+                {(historico ?? []).length === 0 && <li className="text-sm text-muted-foreground">Sem histórico.</li>}
+                {(historico ?? []).map(h => (
+                  <li key={h.id} className="text-xs border-l-2 border-primary/30 pl-3">
+                    <div className="flex justify-between text-muted-foreground">
+                      <span className="font-medium text-foreground">{h.autor}</span>
+                      <span>{new Date(h.created_at).toLocaleString("pt-BR")}</span>
+                    </div>
+                    <div className="text-foreground mt-0.5 font-medium capitalize">{h.acao.replace(/_/g, " ")}</div>
+                    {h.payload && typeof h.payload === "object" && (
+                      <ul className="mt-1 space-y-0.5">
+                        {Object.entries(h.payload as Record<string, unknown>).map(([k, v]) => {
+                          const change = v as { de?: unknown; para?: unknown };
+                          if (change && typeof change === "object" && "de" in change) {
+                            return <li key={k} className="text-muted-foreground"><b className="text-foreground">{k}:</b> {String(change.de ?? "—")} → {String(change.para ?? "—")}</li>;
+                          }
+                          return <li key={k} className="text-muted-foreground"><b className="text-foreground">{k}:</b> {String(v)}</li>;
+                        })}
+                      </ul>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </CardContent>
+          </Card>
         </div>
       </div>
     </div>
