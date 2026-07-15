@@ -149,10 +149,20 @@ function NovaOsPage() {
       <Card className="border-dashed border-primary/40 bg-primary/5">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base"><Sparkles className="h-4 w-4 text-primary" />Extração automática por IA</CardTitle>
-          <CardDescription>Em breve: anexe um PDF, imagem ou planilha do pedido e a IA preenche os campos da O.S. automaticamente. Por enquanto, preencha manualmente abaixo.</CardDescription>
+          <CardDescription>Envie um PDF ou imagem do pedido/orçamento e a IA preenche os campos automaticamente. Revise antes de salvar.</CardDescription>
         </CardHeader>
         <CardContent>
-          <Button variant="outline" disabled className="gap-2"><Upload className="h-4 w-4" />Enviar documento (em breve)</Button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="application/pdf,image/*"
+            className="hidden"
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileUpload(f); }}
+          />
+          <Button variant="outline" disabled={extracting} className="gap-2" onClick={() => fileInputRef.current?.click()}>
+            {extracting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+            {extracting ? "Extraindo dados..." : "Enviar documento"}
+          </Button>
         </CardContent>
       </Card>
 
