@@ -12,8 +12,9 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { OS_STATUS_LABEL, OS_STATUS_LIST, OS_STATUS_CLASS, ETAPA_LABEL, ETAPA_ORDER, formatBRL, formatDate, isAtrasada, diffDays, type OsStatus, type EtapaTipo } from "@/lib/os-utils";
 import { toast } from "sonner";
-import { ArrowLeft, CheckCircle2, Circle, MessageSquare, AlertTriangle, Save } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Circle, MessageSquare, AlertTriangle, Save, Paperclip, Upload, Trash2, History, Download } from "lucide-react";
 import { useSession } from "@/hooks/use-auth";
+import { useRef } from "react";
 
 export const Route = createFileRoute("/_app/ordens/$id")({
   head: () => ({ meta: [{ title: "O.S. — Sartori Group" }] }),
