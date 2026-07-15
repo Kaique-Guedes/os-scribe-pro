@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -12,8 +12,9 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { OS_STATUS_LABEL, OS_STATUS_LIST, OS_STATUS_CLASS, ETAPA_LABEL, ETAPA_ORDER, formatBRL, formatDate, isAtrasada, diffDays, type OsStatus, type EtapaTipo } from "@/lib/os-utils";
 import { toast } from "sonner";
-import { ArrowLeft, CheckCircle2, Circle, MessageSquare, AlertTriangle, Save } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Circle, MessageSquare, AlertTriangle, Save, Paperclip, Upload, Trash2, History, Download } from "lucide-react";
 import { useSession } from "@/hooks/use-auth";
+
 
 export const Route = createFileRoute("/_app/ordens/$id")({
   head: () => ({ meta: [{ title: "O.S. — Sartori Group" }] }),
@@ -57,6 +58,56 @@ function OsDetail() {
     queryKey: ["clientes-simple"],
     queryFn: async () => (await supabase.from("clientes").select("id, nome").order("nome")).data ?? [],
   });
+  const { data: anexos } = useQuery({
+    queryKey: ["os-anexos", id],
+    queryFn: async () => (await supabase.from("os_anexos").select("*").eq("os_id", id).order("created_at", { ascending: false })).data ?? [],
+  });
+  const { data: historico } = useQuery({
+    queryKey: ["os-historico", id],
+    queryFn: async () => {
+      const { data: rows } = await supabase.from("os_historico").select("*").eq("os_id", id).order("created_at", { ascending: false });
+      const list = rows ?? [];
+      const ids = Array.from(new Set(list.map(h => h.user_id).filter(Boolean) as string[]));
+      const map = new Map<string, string>();
+      if (ids.length) {
+        const { data: profs } = await supabase.from("profiles").select("id, nome").in("id", ids);
+        (profs ?? []).forEach(p => map.set(p.id, p.nome));
+      }
+      return list.map(h => ({ ...h, autor: h.user_id ? (map.get(h.user_id) ?? "Usuário") : "Sistema" }));
+    },
+  });
+
+  const fileRef = useRef<HTMLInputElement>(null);
+  const uploadAnexo = useMutation({
+    mutationFn: async (file: File) => {
+      if (!user) throw new Error("Sem sessão");
+      const path = `${id}/${Date.now()}-${file.name.replace(/[^\w.\-]/g, "_")}`;
+      const { error: upErr } = await supabase.storage.from("os-files").upload(path, file, { contentType: file.type });
+      if (upErr) throw upErr;
+      const { error } = await supabase.from("os_anexos").insert({
+        os_id: id, storage_path: path, nome: file.name, mime_type: file.type, tamanho: file.size, uploaded_by: user.id,
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => { toast.success("Anexo enviado."); qc.invalidateQueries({ queryKey: ["os-anexos", id] }); },
+    onError: (e: Error) => toast.error(e.message),
+  });
+  const removeAnexo = useMutation({
+    mutationFn: async (anexo: { id: string; storage_path: string }) => {
+      await supabase.storage.from("os-files").remove([anexo.storage_path]);
+      const { error } = await supabase.from("os_anexos").delete().eq("id", anexo.id);
+      if (error) throw error;
+    },
+    onSuccess: () => { toast.success("Anexo removido."); qc.invalidateQueries({ queryKey: ["os-anexos", id] }); },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  async function downloadAnexo(path: string, nome: string) {
+    const { data, error } = await supabase.storage.from("os-files").createSignedUrl(path, 60);
+    if (error || !data) { toast.error(error?.message ?? "Falha"); return; }
+    const a = document.createElement("a");
+    a.href = data.signedUrl; a.download = nome; a.target = "_blank"; a.click();
+  }
 
   const [edit, setEdit] = useState<Record<string, unknown>>({});
   useEffect(() => { setEdit({}); }, [os?.id]);
@@ -73,6 +124,7 @@ function OsDetail() {
       toast.success("O.S. atualizada.");
       qc.invalidateQueries({ queryKey: ["os", id] });
       qc.invalidateQueries({ queryKey: ["ordens"] });
+      qc.invalidateQueries({ queryKey: ["os-historico", id] });
       setEdit({});
     },
     onError: (e: Error) => toast.error(e.message),
@@ -255,6 +307,67 @@ function OsDetail() {
                       <span>{new Date(c.created_at).toLocaleString("pt-BR")}</span>
                     </div>
                     <p className="whitespace-pre-wrap">{c.texto}</p>
+                  </li>
+                ))}
+              </ul>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base flex items-center gap-2"><Paperclip className="h-4 w-4" />Anexos</CardTitle>
+              <CardDescription>PDFs, imagens, planilhas do pedido.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <input
+                ref={fileRef}
+                type="file"
+                className="hidden"
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) { uploadAnexo.mutate(f); e.target.value = ""; } }}
+              />
+              <Button size="sm" variant="outline" className="w-full gap-2" disabled={uploadAnexo.isPending} onClick={() => fileRef.current?.click()}>
+                <Upload className="h-4 w-4" />{uploadAnexo.isPending ? "Enviando..." : "Enviar arquivo"}
+              </Button>
+              <ul className="space-y-2 max-h-72 overflow-auto pr-1">
+                {(anexos ?? []).length === 0 && <li className="text-sm text-muted-foreground">Nenhum anexo.</li>}
+                {(anexos ?? []).map(a => (
+                  <li key={a.id} className="flex items-center gap-2 text-sm border rounded-md p-2">
+                    <Paperclip className="h-4 w-4 text-muted-foreground shrink-0" />
+                    <button className="flex-1 min-w-0 text-left hover:underline truncate" onClick={() => downloadAnexo(a.storage_path, a.nome)}>{a.nome}</button>
+                    <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => downloadAnexo(a.storage_path, a.nome)}><Download className="h-3.5 w-3.5" /></Button>
+                    <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => confirm("Remover anexo?") && removeAnexo.mutate({ id: a.id, storage_path: a.storage_path })}><Trash2 className="h-3.5 w-3.5" /></Button>
+                  </li>
+                ))}
+              </ul>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base flex items-center gap-2"><History className="h-4 w-4" />Histórico de versões</CardTitle>
+              <CardDescription>Auditoria de alterações da O.S.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ul className="space-y-3 max-h-96 overflow-auto pr-1">
+                {(historico ?? []).length === 0 && <li className="text-sm text-muted-foreground">Sem histórico.</li>}
+                {(historico ?? []).map(h => (
+                  <li key={h.id} className="text-xs border-l-2 border-primary/30 pl-3">
+                    <div className="flex justify-between text-muted-foreground">
+                      <span className="font-medium text-foreground">{h.autor}</span>
+                      <span>{new Date(h.created_at).toLocaleString("pt-BR")}</span>
+                    </div>
+                    <div className="text-foreground mt-0.5 font-medium capitalize">{h.acao.replace(/_/g, " ")}</div>
+                    {h.payload && typeof h.payload === "object" && (
+                      <ul className="mt-1 space-y-0.5">
+                        {Object.entries(h.payload as Record<string, unknown>).map(([k, v]) => {
+                          const change = v as { de?: unknown; para?: unknown };
+                          if (change && typeof change === "object" && "de" in change) {
+                            return <li key={k} className="text-muted-foreground"><b className="text-foreground">{k}:</b> {String(change.de ?? "—")} → {String(change.para ?? "—")}</li>;
+                          }
+                          return <li key={k} className="text-muted-foreground"><b className="text-foreground">{k}:</b> {String(v)}</li>;
+                        })}
+                      </ul>
+                    )}
                   </li>
                 ))}
               </ul>
