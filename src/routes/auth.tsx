@@ -52,8 +52,10 @@ function AuthPage() {
   return (
     <div className="min-h-screen grid lg:grid-cols-2">
       <div className="hidden lg:flex flex-col justify-between p-12 bg-primary text-primary-foreground">
-        <div className="flex items-center gap-3">
-          <div className="bg-white rounded-md p-2"><SartoriLogo className="h-10 w-auto" /></div>
+        <div className="flex items-center">
+          <div className="bg-white rounded-xl p-6 shadow-lg">
+            <SartoriLogo variant="transparent" className="h-24 w-auto" />
+          </div>
         </div>
         <div>
           <h1 className="text-4xl font-semibold leading-tight tracking-tight">Gestão de Ordens de Serviço</h1>
