@@ -1,14 +1,21 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useServerFn } from "@tanstack/react-start";
+import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger, DialogDescription } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useSession, useRoles, isAdmin } from "@/hooks/use-auth";
 import { ROLE_LABEL, type AppRole } from "@/lib/os-utils";
+import { inviteUser } from "@/lib/admin-users.functions";
 import { toast } from "sonner";
-import { Shield, Info } from "lucide-react";
+import { Shield, Info, UserPlus } from "lucide-react";
 
 export const Route = createFileRoute("/_app/configuracoes")({
   head: () => ({ meta: [{ title: "Configurações — Sartori Group" }] }),
@@ -69,9 +76,12 @@ function ConfigPage() {
       )}
 
       <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Usuários</CardTitle>
-          <CardDescription>Novos cadastros começam como <b>Visualizador</b>. Cada usuário tem um papel principal.</CardDescription>
+        <CardHeader className="flex flex-row items-start justify-between gap-4">
+          <div>
+            <CardTitle className="text-base">Usuários</CardTitle>
+            <CardDescription>Novos cadastros começam como <b>Visualizador</b>. Cada usuário tem um papel principal.</CardDescription>
+          </div>
+          {admin && <InviteUserDialog />}
         </CardHeader>
         <CardContent className="p-0">
           <Table>
@@ -125,5 +135,59 @@ function ConfigPage() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+function InviteUserDialog() {
+  const qc = useQueryClient();
+  const invite = useServerFn(inviteUser);
+  const [open, setOpen] = useState(false);
+  const [email, setEmail] = useState("");
+  const [nome, setNome] = useState("");
+  const [role, setRole] = useState<AppRole>("viewer");
+  const [loading, setLoading] = useState(false);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      await invite({ data: { email: email.trim(), nome: nome.trim() || undefined, role } });
+      toast.success(`Convite enviado para ${email}`);
+      setEmail(""); setNome(""); setRole("viewer"); setOpen(false);
+      qc.invalidateQueries({ queryKey: ["usuarios-config"] });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Falha ao convidar usuário");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button size="sm"><UserPlus className="h-4 w-4 mr-2" />Convidar usuário</Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Convidar novo usuário</DialogTitle>
+          <DialogDescription>Um e-mail com link de acesso será enviado. O usuário define a senha ao entrar.</DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div><Label>E-mail</Label><Input type="email" required value={email} onChange={(e)=>setEmail(e.target.value)} placeholder="usuario@sartorigroup.com.br" /></div>
+          <div><Label>Nome (opcional)</Label><Input value={nome} onChange={(e)=>setNome(e.target.value)} placeholder="Nome do usuário" /></div>
+          <div>
+            <Label>Papel inicial</Label>
+            <Select value={role} onValueChange={(v)=>setRole(v as AppRole)}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>{ALL_ROLES.map(r => <SelectItem key={r} value={r}>{ROLE_LABEL[r]}</SelectItem>)}</SelectContent>
+            </Select>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={()=>setOpen(false)} disabled={loading}>Cancelar</Button>
+            <Button type="submit" disabled={loading || !email}>{loading ? "Enviando..." : "Enviar convite"}</Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
