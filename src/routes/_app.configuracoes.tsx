@@ -76,9 +76,12 @@ function ConfigPage() {
       )}
 
       <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Usuários</CardTitle>
-          <CardDescription>Novos cadastros começam como <b>Visualizador</b>. Cada usuário tem um papel principal.</CardDescription>
+        <CardHeader className="flex flex-row items-start justify-between gap-4">
+          <div>
+            <CardTitle className="text-base">Usuários</CardTitle>
+            <CardDescription>Novos cadastros começam como <b>Visualizador</b>. Cada usuário tem um papel principal.</CardDescription>
+          </div>
+          {admin && <InviteUserDialog />}
         </CardHeader>
         <CardContent className="p-0">
           <Table>
