@@ -57,15 +57,12 @@ export type Database = {
           created_by: string | null
           data_entrega_prev: string | null
           data_entrega_real: string | null
-          data_faturamento_real: string | null
           data_inicio_prev: string | null
           descricao: string | null
           fora_escopo: string | null
           gestor: string | null
           id: string
           local_entrega: string | null
-          nota_fiscal_anexo_id: string | null
-          numero_nota_fiscal: string | null
           numero_os: string
           numero_pedido: string | null
           numero_ss: string | null
@@ -78,7 +75,6 @@ export type Database = {
           tipo_frete: string | null
           unidade: string | null
           updated_at: string
-          valor_faturado_real: number | null
           valor_total: number | null
           valor_unit: number | null
         }
@@ -88,15 +84,12 @@ export type Database = {
           created_by?: string | null
           data_entrega_prev?: string | null
           data_entrega_real?: string | null
-          data_faturamento_real?: string | null
           data_inicio_prev?: string | null
           descricao?: string | null
           fora_escopo?: string | null
           gestor?: string | null
           id?: string
           local_entrega?: string | null
-          nota_fiscal_anexo_id?: string | null
-          numero_nota_fiscal?: string | null
           numero_os: string
           numero_pedido?: string | null
           numero_ss?: string | null
@@ -109,7 +102,6 @@ export type Database = {
           tipo_frete?: string | null
           unidade?: string | null
           updated_at?: string
-          valor_faturado_real?: number | null
           valor_total?: number | null
           valor_unit?: number | null
         }
@@ -119,15 +111,12 @@ export type Database = {
           created_by?: string | null
           data_entrega_prev?: string | null
           data_entrega_real?: string | null
-          data_faturamento_real?: string | null
           data_inicio_prev?: string | null
           descricao?: string | null
           fora_escopo?: string | null
           gestor?: string | null
           id?: string
           local_entrega?: string | null
-          nota_fiscal_anexo_id?: string | null
-          numero_nota_fiscal?: string | null
           numero_os?: string
           numero_pedido?: string | null
           numero_ss?: string | null
@@ -140,7 +129,6 @@ export type Database = {
           tipo_frete?: string | null
           unidade?: string | null
           updated_at?: string
-          valor_faturado_real?: number | null
           valor_total?: number | null
           valor_unit?: number | null
         }
@@ -150,13 +138,6 @@ export type Database = {
             columns: ["cliente_id"]
             isOneToOne: false
             referencedRelation: "clientes"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "ordens_servico_nota_fiscal_anexo_id_fkey"
-            columns: ["nota_fiscal_anexo_id"]
-            isOneToOne: false
-            referencedRelation: "os_anexos"
             referencedColumns: ["id"]
           },
         ]
