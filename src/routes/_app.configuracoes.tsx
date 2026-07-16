@@ -137,3 +137,57 @@ function ConfigPage() {
     </div>
   );
 }
+
+function InviteUserDialog() {
+  const qc = useQueryClient();
+  const invite = useServerFn(inviteUser);
+  const [open, setOpen] = useState(false);
+  const [email, setEmail] = useState("");
+  const [nome, setNome] = useState("");
+  const [role, setRole] = useState<AppRole>("viewer");
+  const [loading, setLoading] = useState(false);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      await invite({ data: { email: email.trim(), nome: nome.trim() || undefined, role } });
+      toast.success(`Convite enviado para ${email}`);
+      setEmail(""); setNome(""); setRole("viewer"); setOpen(false);
+      qc.invalidateQueries({ queryKey: ["usuarios-config"] });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Falha ao convidar usuário");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button size="sm"><UserPlus className="h-4 w-4 mr-2" />Convidar usuário</Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Convidar novo usuário</DialogTitle>
+          <DialogDescription>Um e-mail com link de acesso será enviado. O usuário define a senha ao entrar.</DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div><Label>E-mail</Label><Input type="email" required value={email} onChange={(e)=>setEmail(e.target.value)} placeholder="usuario@sartorigroup.com.br" /></div>
+          <div><Label>Nome (opcional)</Label><Input value={nome} onChange={(e)=>setNome(e.target.value)} placeholder="Nome do usuário" /></div>
+          <div>
+            <Label>Papel inicial</Label>
+            <Select value={role} onValueChange={(v)=>setRole(v as AppRole)}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>{ALL_ROLES.map(r => <SelectItem key={r} value={r}>{ROLE_LABEL[r]}</SelectItem>)}</SelectContent>
+            </Select>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={()=>setOpen(false)} disabled={loading}>Cancelar</Button>
+            <Button type="submit" disabled={loading || !email}>{loading ? "Enviando..." : "Enviar convite"}</Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
