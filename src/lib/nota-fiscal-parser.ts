@@ -23,7 +23,7 @@ async function extrairTextoPdf(file: File): Promise<string> {
   for (let i = 1; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i);
     const content = await page.getTextContent();
-    texto += content.items.map((it) => ("str" in it ? it.str : "")).join(" ") + "\n";
+    texto += content.items.map((it: unknown) => (it && typeof it === "object" && "str" in it ? (it as { str: string }).str : "")).join(" ") + "\n";
   }
   return texto;
 }
