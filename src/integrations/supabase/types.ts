@@ -316,6 +316,50 @@ export type Database = {
           },
         ]
       }
+      os_notas_fiscais: {
+        Row: {
+          created_at: string
+          data_emissao: string
+          id: string
+          nome_arquivo: string
+          numero_nota_fiscal: string | null
+          os_id: string
+          storage_path: string
+          uploaded_by: string | null
+          valor: number
+        }
+        Insert: {
+          created_at?: string
+          data_emissao: string
+          id?: string
+          nome_arquivo: string
+          numero_nota_fiscal?: string | null
+          os_id: string
+          storage_path: string
+          uploaded_by?: string | null
+          valor: number
+        }
+        Update: {
+          created_at?: string
+          data_emissao?: string
+          id?: string
+          nome_arquivo?: string
+          numero_nota_fiscal?: string | null
+          os_id?: string
+          storage_path?: string
+          uploaded_by?: string | null
+          valor?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "os_notas_fiscais_os_id_fkey"
+            columns: ["os_id"]
+            isOneToOne: false
+            referencedRelation: "ordens_servico"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profiles: {
         Row: {
           created_at: string
