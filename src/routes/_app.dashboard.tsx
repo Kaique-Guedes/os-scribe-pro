@@ -52,7 +52,6 @@ import {
   Timer,
   TrendingUp,
   X,
-  PauseCircle,
   Receipt,
   PackageCheck,
   Gauge,
@@ -98,6 +97,19 @@ function DashboardPage() {
     queryKey: ["dashboard-os-etapas"],
     queryFn: async () => {
       const { data, error } = await supabase.from("os_etapas").select("os_id, tipo, status, data");
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+
+  const { data: notasFiscaisData } = useQuery({
+    queryKey: ["dashboard-notas-fiscais"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("os_notas_fiscais")
+        .select(
+          "id, os_id, valor, data_emissao, numero_nota_fiscal, ordens_servico(numero_os, cliente_id, clientes(nome))",
+        );
       if (error) throw error;
       return data ?? [];
     },
@@ -304,15 +316,6 @@ function DashboardPage() {
     ? Math.round((entreguesNoPrazo / entregues.length) * 100)
     : null;
 
-  // O.S paradas há mais tempo sem atualização (ativas, ordenadas pela atualização mais antiga)
-  const paradasHaMaisTempo = useMemo(() => {
-    return rows
-      .filter((r) => !["entregue", "cancelada"].includes(r.status))
-      .map((r) => ({ ...r, diasParada: diffDays(r.updated_at?.slice(0, 10), today) ?? 0 }))
-      .sort((a, b) => b.diasParada - a.diasParada)
-      .slice(0, 6);
-  }, [rows, today]);
-
   // Tabela detalhada (ordenada por prazo, mais urgentes primeiro)
   const tabelaRows = useMemo(() => {
     return [...rows].sort((a, b) =>
@@ -326,24 +329,39 @@ function DashboardPage() {
     () => allRows.filter((r) => clienteId === "todos" || r.cliente_id === clienteId),
     [allRows, clienteId],
   );
+  const notasPorCliente = useMemo(
+    () =>
+      (notasFiscaisData ?? []).filter(
+        (n) => clienteId === "todos" || n.ordens_servico?.cliente_id === clienteId,
+      ),
+    [notasFiscaisData, clienteId],
+  );
   const mesReferencia = periodo !== "todos" ? periodo : today.slice(0, 7);
 
-  function calcularComparativo(rowsBase: typeof allRows, mes: string) {
+  // Cada nota fiscal soma seu valor no mês da SUA data de emissão (não da O.S.) —
+  // assim o faturamento realizado reflete quando o dinheiro efetivamente entrou.
+  function calcularComparativo(
+    rowsBase: typeof allRows,
+    notasBase: typeof notasFiscaisData,
+    mes: string,
+  ) {
     const previstasNoMes = rowsBase.filter((r) => r.data_entrega_prev?.slice(0, 7) === mes);
     const realizadasNoMes = rowsBase.filter((r) => r.data_entrega_real?.slice(0, 7) === mes);
+    const notasNoMes = (notasBase ?? []).filter((n) => n.data_emissao?.slice(0, 7) === mes);
     const faturamentoPrevisto = previstasNoMes.reduce((s, r) => s + Number(r.valor_total || 0), 0);
-    const faturamentoRealizado = rowsBase
-      .filter((r) => r.data_faturamento_real?.slice(0, 7) === mes)
-      .reduce((s, r) => s + Number(r.valor_faturado_real || 0), 0);
+    const faturamentoRealizado = notasNoMes.reduce((s, n) => s + Number(n.valor || 0), 0);
     return {
       entregasPrevistas: previstasNoMes.length,
       entregasRealizadas: realizadasNoMes.length,
       faturamentoPrevisto,
       faturamentoRealizado,
+      previstasNoMes,
+      realizadasNoMes,
+      notasNoMes,
     };
   }
 
-  const comparativoMes = calcularComparativo(rowsPorCliente, mesReferencia);
+  const comparativoMes = calcularComparativo(rowsPorCliente, notasPorCliente, mesReferencia);
   const mesReferenciaLabel = (() => {
     const [y, m] = mesReferencia.split("-");
     return `${MESES[Number(m) - 1]}/${y}`;
@@ -358,7 +376,7 @@ function DashboardPage() {
       meses.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
     }
     return meses.map((mes) => {
-      const c = calcularComparativo(rowsPorCliente, mes);
+      const c = calcularComparativo(rowsPorCliente, notasPorCliente, mes);
       const [yy, mm] = mes.split("-");
       return {
         mes: `${MESES[Number(mm) - 1]?.slice(0, 3)}/${yy.slice(2)}`,
@@ -368,7 +386,12 @@ function DashboardPage() {
         "Faturamento realizado": c.faturamentoRealizado,
       };
     });
-  }, [rowsPorCliente, mesReferencia]);
+  }, [rowsPorCliente, notasPorCliente, mesReferencia]);
+
+  // Drill-down: qual lista mostrar em detalhe (clicando nos cards do comparativo)
+  const [detalheAberto, setDetalheAberto] = useState<
+    "previstas" | "realizadas" | "fatPrevisto" | "fatRealizado" | null
+  >(null);
 
   return (
     <div className="p-6 space-y-6">
@@ -479,6 +502,8 @@ function DashboardPage() {
               icon={PackageCheck}
               label="Entregas previstas"
               value={comparativoMes.entregasPrevistas}
+              onClick={() => setDetalheAberto(detalheAberto === "previstas" ? null : "previstas")}
+              ativo={detalheAberto === "previstas"}
             />
             <ComparativoStat
               icon={CheckCircle2}
@@ -489,11 +514,17 @@ function DashboardPage() {
                   ? "warning"
                   : "success"
               }
+              onClick={() => setDetalheAberto(detalheAberto === "realizadas" ? null : "realizadas")}
+              ativo={detalheAberto === "realizadas"}
             />
             <ComparativoStat
               icon={Wallet}
               label="Faturamento previsto"
               value={formatBRL(comparativoMes.faturamentoPrevisto)}
+              onClick={() =>
+                setDetalheAberto(detalheAberto === "fatPrevisto" ? null : "fatPrevisto")
+              }
+              ativo={detalheAberto === "fatPrevisto"}
             />
             <ComparativoStat
               icon={Receipt}
@@ -504,8 +535,172 @@ function DashboardPage() {
                   ? "warning"
                   : "success"
               }
+              onClick={() =>
+                setDetalheAberto(detalheAberto === "fatRealizado" ? null : "fatRealizado")
+              }
+              ativo={detalheAberto === "fatRealizado"}
             />
           </div>
+          <p className="text-xs text-muted-foreground -mt-2">
+            Clique em um card acima para ver quais O.S. (ou notas fiscais) estão sendo contadas.
+          </p>
+
+          {detalheAberto && (
+            <div className="rounded-md border">
+              <div className="flex items-center justify-between px-3 py-2 border-b bg-muted/40">
+                <span className="text-sm font-medium">
+                  {detalheAberto === "previstas" && `Entregas previstas em ${mesReferenciaLabel}`}
+                  {detalheAberto === "realizadas" && `Entregas realizadas em ${mesReferenciaLabel}`}
+                  {detalheAberto === "fatPrevisto" &&
+                    `O.S. que compõem o faturamento previsto de ${mesReferenciaLabel}`}
+                  {detalheAberto === "fatRealizado" &&
+                    `Notas fiscais emitidas em ${mesReferenciaLabel}`}
+                </span>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-6 w-6"
+                  onClick={() => setDetalheAberto(null)}
+                >
+                  <X className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+              <div className="max-h-72 overflow-y-auto">
+                <Table>
+                  {(detalheAberto === "previstas" || detalheAberto === "fatPrevisto") && (
+                    <>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>O.S.</TableHead>
+                          <TableHead>Cliente</TableHead>
+                          <TableHead>Prazo de entrega</TableHead>
+                          <TableHead className="text-right">Valor</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {comparativoMes.previstasNoMes.map((r) => (
+                          <TableRow key={r.id}>
+                            <TableCell>
+                              <Link
+                                to="/ordens/$id"
+                                params={{ id: r.id }}
+                                className="font-medium hover:underline"
+                              >
+                                {r.numero_os}
+                              </Link>
+                            </TableCell>
+                            <TableCell className="text-muted-foreground">
+                              {r.clientes?.nome ?? "—"}
+                            </TableCell>
+                            <TableCell>{formatDate(r.data_entrega_prev)}</TableCell>
+                            <TableCell className="text-right">{formatBRL(r.valor_total)}</TableCell>
+                          </TableRow>
+                        ))}
+                        {comparativoMes.previstasNoMes.length === 0 && (
+                          <TableRow>
+                            <TableCell
+                              colSpan={4}
+                              className="text-center text-sm text-muted-foreground py-6"
+                            >
+                              Nenhuma O.S. com entrega prevista neste mês.
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </TableBody>
+                    </>
+                  )}
+
+                  {detalheAberto === "realizadas" && (
+                    <>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>O.S.</TableHead>
+                          <TableHead>Cliente</TableHead>
+                          <TableHead>Entregue em</TableHead>
+                          <TableHead className="text-right">Valor</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {comparativoMes.realizadasNoMes.map((r) => (
+                          <TableRow key={r.id}>
+                            <TableCell>
+                              <Link
+                                to="/ordens/$id"
+                                params={{ id: r.id }}
+                                className="font-medium hover:underline"
+                              >
+                                {r.numero_os}
+                              </Link>
+                            </TableCell>
+                            <TableCell className="text-muted-foreground">
+                              {r.clientes?.nome ?? "—"}
+                            </TableCell>
+                            <TableCell>{formatDate(r.data_entrega_real)}</TableCell>
+                            <TableCell className="text-right">{formatBRL(r.valor_total)}</TableCell>
+                          </TableRow>
+                        ))}
+                        {comparativoMes.realizadasNoMes.length === 0 && (
+                          <TableRow>
+                            <TableCell
+                              colSpan={4}
+                              className="text-center text-sm text-muted-foreground py-6"
+                            >
+                              Nenhuma O.S. entregue neste mês.
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </TableBody>
+                    </>
+                  )}
+
+                  {detalheAberto === "fatRealizado" && (
+                    <>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>O.S.</TableHead>
+                          <TableHead>Cliente</TableHead>
+                          <TableHead>Nº NF</TableHead>
+                          <TableHead>Data de emissão</TableHead>
+                          <TableHead className="text-right">Valor</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {comparativoMes.notasNoMes.map((n) => (
+                          <TableRow key={n.id}>
+                            <TableCell>
+                              <Link
+                                to="/ordens/$id"
+                                params={{ id: n.os_id }}
+                                className="font-medium hover:underline"
+                              >
+                                {n.ordens_servico?.numero_os ?? "—"}
+                              </Link>
+                            </TableCell>
+                            <TableCell className="text-muted-foreground">
+                              {n.ordens_servico?.clientes?.nome ?? "—"}
+                            </TableCell>
+                            <TableCell>{n.numero_nota_fiscal ?? "—"}</TableCell>
+                            <TableCell>{formatDate(n.data_emissao)}</TableCell>
+                            <TableCell className="text-right">{formatBRL(n.valor)}</TableCell>
+                          </TableRow>
+                        ))}
+                        {comparativoMes.notasNoMes.length === 0 && (
+                          <TableRow>
+                            <TableCell
+                              colSpan={5}
+                              className="text-center text-sm text-muted-foreground py-6"
+                            >
+                              Nenhuma nota fiscal emitida neste mês.
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </TableBody>
+                    </>
+                  )}
+                </Table>
+              </div>
+            </div>
+          )}
 
           <div className="grid gap-4 lg:grid-cols-2">
             <div className="h-56">
@@ -735,7 +930,7 @@ function DashboardPage() {
         </Card>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader>
             <CardTitle className="text-base flex items-center gap-2">
@@ -811,50 +1006,6 @@ function DashboardPage() {
                       <div className="text-xs text-muted-foreground">
                         {OS_STATUS_LABEL[r.status as OsStatus]}
                       </div>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card className="border-warning/40">
-          <CardHeader>
-            <CardTitle className="text-base flex items-center gap-2 text-warning-foreground">
-              <PauseCircle className="h-4 w-4" />
-              Paradas há mais tempo
-            </CardTitle>
-            <CardDescription>
-              O.S. ativas sem atualização recente — possíveis gargalos.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {paradasHaMaisTempo.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Nenhuma O.S. ativa.</p>
-            ) : (
-              <ul className="divide-y">
-                {paradasHaMaisTempo.map((r) => (
-                  <li key={r.id} className="py-2 flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <Link
-                        to="/ordens/$id"
-                        params={{ id: r.id }}
-                        className="font-medium hover:underline"
-                      >
-                        {r.numero_os}
-                      </Link>
-                      <div className="text-xs text-muted-foreground truncate">
-                        {r.clientes?.nome ?? "—"}
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-sm">
-                        {r.diasParada} dia{r.diasParada === 1 ? "" : "s"} sem atualização
-                      </div>
-                      <Badge variant="outline" className={OS_STATUS_CLASS[r.status as OsStatus]}>
-                        {OS_STATUS_LABEL[r.status as OsStatus]}
-                      </Badge>
                     </div>
                   </li>
                 ))}
@@ -942,11 +1093,15 @@ function ComparativoStat({
   label,
   value,
   tone = "neutral",
+  onClick,
+  ativo,
 }: {
   icon: React.ComponentType<{ className?: string }>;
   label: string;
   value: number | string;
   tone?: "neutral" | "success" | "warning";
+  onClick?: () => void;
+  ativo?: boolean;
 }) {
   const toneMap = {
     neutral: "bg-muted text-foreground",
@@ -954,13 +1109,19 @@ function ComparativoStat({
     warning: "bg-warning/10 text-warning-foreground",
   } as const;
   return (
-    <div className={`rounded-lg p-3 ${toneMap[tone]}`}>
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-lg p-3 text-left w-full transition-shadow ${toneMap[tone]} ${
+        onClick ? "cursor-pointer hover:opacity-90" : "cursor-default"
+      } ${ativo ? "ring-2 ring-primary" : ""}`}
+    >
       <div className="flex items-center gap-1.5 text-xs opacity-80 mb-1">
         <Icon className="h-3.5 w-3.5" />
         {label}
       </div>
       <div className="text-xl font-semibold">{value}</div>
-    </div>
+    </button>
   );
 }
 
