@@ -1,274 +1,172 @@
-import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
+import { Button } from "@/components/ui/button";
 import {
-  Dialog,
-  DialogTrigger,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from "@/components/ui/dialog";
-import {
-  Table,
-  TableHeader,
-  TableRow,
-  TableHead,
-  TableBody,
-  TableCell,
+  Table, TableHeader, TableRow, TableHead, TableBody, TableCell,
 } from "@/components/ui/table";
 import {
-  OS_STATUS_CLASS,
-  OS_STATUS_LABEL,
-  formatBRL,
-  formatDate,
-  diffDays,
-  type OsStatus,
+  OS_STATUS_CLASS, OS_STATUS_LABEL, OS_STATUS_LIST,
+  formatBRL, formatDate, isAtrasada, type OsStatus,
 } from "@/lib/os-utils";
-import { toast } from "sonner";
-import { ArrowLeft, Wallet, ClipboardList, TrendingUp, Pencil } from "lucide-react";
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
+  PieChart, Pie, Cell, Legend,
+} from "recharts";
+import {
+  ClipboardList, Wallet, AlertTriangle, CheckCircle2, Plus,
+} from "lucide-react";
 
-export const Route = createFileRoute("/_app/clientes/$id")({
-  head: () => ({ meta: [{ title: "Cliente — Sartori Group" }] }),
-  component: ClienteDetail,
+export const Route = createFileRoute("/_app/dashboard")({
+  head: () => ({ meta: [{ title: "Dashboard — Sartori Group" }] }),
+  component: DashboardPage,
 });
 
-function ClienteDetail() {
-  const { id } = Route.useParams();
-  const navigate = useNavigate();
-  const qc = useQueryClient();
+const STATUS_COLORS: Record<OsStatus, string> = {
+  aberta: "hsl(var(--info))",
+  aguardando_material: "hsl(var(--warning))",
+  em_producao: "hsl(var(--primary))",
+  em_pintura: "hsl(var(--accent-foreground))",
+  pronta: "hsl(var(--success))",
+  entregue: "hsl(var(--muted-foreground))",
+  atrasada: "hsl(var(--destructive))",
+  cancelada: "hsl(var(--muted-foreground))",
+};
 
-  const { data: cliente } = useQuery({
-    queryKey: ["cliente", id],
-    queryFn: async () => (await supabase.from("clientes").select("*").eq("id", id).single()).data,
-  });
-  const { data: ordens } = useQuery({
-    queryKey: ["cliente-ordens", id],
-    queryFn: async () =>
-      (
-        await supabase
-          .from("ordens_servico")
-          .select("*")
-          .eq("cliente_id", id)
-          .order("created_at", { ascending: false })
-      ).data ?? [],
-  });
-
-  const rows = ordens ?? [];
-  const ativas = rows.filter((r) => !["entregue", "cancelada"].includes(r.status));
-  const valorCarteira = ativas.reduce((s, r) => s + Number(r.valor_total || 0), 0);
-  const valorTotal = rows.reduce((s, r) => s + Number(r.valor_total || 0), 0);
-
-  const entregues = rows.filter(
-    (r) => r.status === "entregue" && r.data_entrega_prev && r.data_entrega_real,
-  );
-  const leadTimes = entregues
-    .map((r) => diffDays(r.data_entrega_prev, r.data_entrega_real))
-    .filter((v): v is number => v != null);
-  const leadMedio = leadTimes.length
-    ? Math.round(leadTimes.reduce((a, b) => a + b, 0) / leadTimes.length)
-    : null;
-
-  // ---- Edição dos dados do cliente ----
-  const [editOpen, setEditOpen] = useState(false);
-  const [form, setForm] = useState<Record<string, string>>({});
-
-  function abrirEdicao() {
-    setForm({
-      nome: cliente?.nome ?? "",
-      contato: cliente?.contato ?? "",
-      cnpj: cliente?.cnpj ?? "",
-      email: cliente?.email ?? "",
-      telefone: cliente?.telefone ?? "",
-      observacoes: cliente?.observacoes ?? "",
-    });
-    setEditOpen(true);
-  }
-
-  const salvarEdicao = useMutation({
-    mutationFn: async () => {
-      if (!form.nome?.trim()) throw new Error("Informe o nome");
-      const { error } = await supabase
-        .from("clientes")
-        .update({
-          nome: form.nome.trim(),
-          contato: form.contato || null,
-          cnpj: form.cnpj || null,
-          email: form.email || null,
-          telefone: form.telefone || null,
-          observacoes: form.observacoes || null,
-        })
-        .eq("id", id);
+function DashboardPage() {
+  const { data: ordens = [] } = useQuery({
+    queryKey: ["dashboard-os"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("ordens_servico")
+        .select("id, numero_os, status, data_entrega_prev, data_entrega_real, valor_total, cliente_id, descricao, created_at, clientes(nome)")
+        .order("created_at", { ascending: false });
       if (error) throw error;
+      return data ?? [];
     },
-    onSuccess: () => {
-      toast.success("Cliente atualizado.");
-      qc.invalidateQueries({ queryKey: ["cliente", id] });
-      qc.invalidateQueries({ queryKey: ["clientes"] });
-      setEditOpen(false);
-    },
-    onError: (e: Error) => toast.error(e.message),
   });
 
-  if (!cliente) return <div className="p-6 text-muted-foreground">Carregando...</div>;
+  const total = ordens.length;
+  const emAndamento = ordens.filter(o => !["entregue","cancelada"].includes(o.status)).length;
+  const atrasadas = ordens.filter(o => isAtrasada(o.data_entrega_prev, o.data_entrega_real, o.status as OsStatus)).length;
+  const entregues = ordens.filter(o => o.status === "entregue").length;
+  const valorTotal = ordens.reduce((s, o) => s + (Number(o.valor_total) || 0), 0);
+
+  const statusCount = OS_STATUS_LIST.map(s => ({
+    status: s,
+    label: OS_STATUS_LABEL[s],
+    count: ordens.filter(o => o.status === s).length,
+  })).filter(x => x.count > 0);
+
+  const recentes = ordens.slice(0, 8);
 
   return (
-    <div className="p-6 max-w-6xl mx-auto space-y-5">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <Button variant="ghost" size="sm" onClick={() => navigate({ to: "/clientes" })}>
-            <ArrowLeft className="h-4 w-4 mr-1" />
-            Clientes
-          </Button>
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">{cliente.nome}</h1>
-            <p className="text-sm text-muted-foreground">
-              {cliente.contato && <>{cliente.contato} • </>}
-              {cliente.email && <>{cliente.email} • </>}
-              {cliente.telefone}
-            </p>
-          </div>
+    <div className="p-6 max-w-7xl mx-auto space-y-6">
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
+          <p className="text-sm text-muted-foreground">Visão geral das ordens de serviço.</p>
         </div>
-
-        <Dialog open={editOpen} onOpenChange={setEditOpen}>
-          <DialogTrigger asChild>
-            <Button variant="outline" size="sm" onClick={abrirEdicao}>
-              <Pencil className="h-4 w-4 mr-2" />
-              Editar cliente
-            </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Editar cliente</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-3">
-              <div>
-                <Label>Nome *</Label>
-                <Input
-                  value={form.nome ?? ""}
-                  onChange={(e) => setForm((f) => ({ ...f, nome: e.target.value }))}
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <Label>Contato</Label>
-                  <Input
-                    value={form.contato ?? ""}
-                    onChange={(e) => setForm((f) => ({ ...f, contato: e.target.value }))}
-                  />
-                </div>
-                <div>
-                  <Label>CNPJ</Label>
-                  <Input
-                    value={form.cnpj ?? ""}
-                    onChange={(e) => setForm((f) => ({ ...f, cnpj: e.target.value }))}
-                  />
-                </div>
-                <div>
-                  <Label>E-mail</Label>
-                  <Input
-                    type="email"
-                    value={form.email ?? ""}
-                    onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
-                  />
-                </div>
-                <div>
-                  <Label>Telefone</Label>
-                  <Input
-                    value={form.telefone ?? ""}
-                    onChange={(e) => setForm((f) => ({ ...f, telefone: e.target.value }))}
-                  />
-                </div>
-              </div>
-              <div>
-                <Label>Observações</Label>
-                <Textarea
-                  value={form.observacoes ?? ""}
-                  onChange={(e) => setForm((f) => ({ ...f, observacoes: e.target.value }))}
-                />
-              </div>
-            </div>
-            <DialogFooter>
-              <Button variant="ghost" onClick={() => setEditOpen(false)}>
-                Cancelar
-              </Button>
-              <Button disabled={salvarEdicao.isPending} onClick={() => salvarEdicao.mutate()}>
-                {salvarEdicao.isPending ? "Salvando..." : "Salvar alterações"}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+        <Button asChild><Link to="/ordens/nova"><Plus className="h-4 w-4 mr-2" />Nova O.S.</Link></Button>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-4">
-        <Metric icon={ClipboardList} label="Total de O.S." value={rows.length} />
-        <Metric icon={ClipboardList} label="Ativas" value={ativas.length} tone="primary" />
-        <Metric icon={Wallet} label="Em carteira" value={formatBRL(valorCarteira)} tone="primary" />
-        <Metric
-          icon={TrendingUp}
-          label="Lead time médio (dias vs. previsto)"
-          value={leadMedio == null ? "—" : `${leadMedio > 0 ? "+" : ""}${leadMedio}`}
-          tone={leadMedio != null && leadMedio > 0 ? "danger" : "success"}
-        />
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <MetricCard title="Total de O.S." value={total.toString()} icon={<ClipboardList className="h-5 w-5 text-primary" />} />
+        <MetricCard title="Em andamento" value={emAndamento.toString()} icon={<ClipboardList className="h-5 w-5 text-info" />} />
+        <MetricCard title="Atrasadas" value={atrasadas.toString()} icon={<AlertTriangle className="h-5 w-5 text-destructive" />} tone={atrasadas > 0 ? "danger" : undefined} />
+        <MetricCard title="Entregues" value={entregues.toString()} icon={<CheckCircle2 className="h-5 w-5 text-success" />} />
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-3">
+        <Card className="lg:col-span-2">
+          <CardHeader>
+            <CardTitle className="text-base">O.S. por status</CardTitle>
+            <CardDescription>Distribuição atual do pipeline</CardDescription>
+          </CardHeader>
+          <CardContent className="h-72">
+            {statusCount.length === 0 ? (
+              <EmptyChart />
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={statusCount}>
+                  <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+                  <XAxis dataKey="label" tick={{ fontSize: 11 }} interval={0} angle={-15} textAnchor="end" height={60} />
+                  <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
+                  <Tooltip />
+                  <Bar dataKey="count" radius={[6,6,0,0]}>
+                    {statusCount.map((entry) => (
+                      <Cell key={entry.status} fill={STATUS_COLORS[entry.status as OsStatus]} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base flex items-center gap-2"><Wallet className="h-4 w-4 text-primary" />Valor total em O.S.</CardTitle>
+            <CardDescription>Soma dos valores previstos</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-semibold tracking-tight">{formatBRL(valorTotal)}</div>
+            <div className="h-52 mt-4">
+              {statusCount.length === 0 ? <EmptyChart /> : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie data={statusCount} dataKey="count" nameKey="label" innerRadius={40} outerRadius={70}>
+                      {statusCount.map(e => <Cell key={e.status} fill={STATUS_COLORS[e.status as OsStatus]} />)}
+                    </Pie>
+                    <Legend wrapperStyle={{ fontSize: 11 }} />
+                  </PieChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Histórico de Ordens de Serviço</CardTitle>
-          <CardDescription>
-            Valor total histórico: <b className="text-foreground">{formatBRL(valorTotal)}</b>
-          </CardDescription>
+          <CardTitle className="text-base">O.S. recentes</CardTitle>
+          <CardDescription>Últimas ordens de serviço criadas</CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           <Table>
             <TableHeader>
               <TableRow>
                 <TableHead>Nº O.S.</TableHead>
-                <TableHead>Projeto</TableHead>
+                <TableHead>Cliente</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Entrega prev.</TableHead>
-                <TableHead>Entrega real</TableHead>
                 <TableHead className="text-right">Valor</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {rows.map((r) => (
-                <TableRow key={r.id}>
-                  <TableCell>
-                    <Link
-                      to="/ordens/$id"
-                      params={{ id: r.id }}
-                      className="font-medium hover:underline"
-                    >
-                      {r.numero_os}
-                    </Link>
-                  </TableCell>
-                  <TableCell className="max-w-[220px] truncate">{r.projeto ?? "—"}</TableCell>
-                  <TableCell>
-                    <Badge variant="outline" className={OS_STATUS_CLASS[r.status as OsStatus]}>
-                      {OS_STATUS_LABEL[r.status as OsStatus]}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>{formatDate(r.data_entrega_prev)}</TableCell>
-                  <TableCell>{formatDate(r.data_entrega_real)}</TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {formatBRL(Number(r.valor_total))}
-                  </TableCell>
-                </TableRow>
-              ))}
-              {rows.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
-                    Sem O.S. para este cliente.
-                  </TableCell>
-                </TableRow>
+              {recentes.map(o => {
+                const atrasada = isAtrasada(o.data_entrega_prev, o.data_entrega_real, o.status as OsStatus);
+                return (
+                  <TableRow key={o.id} className="cursor-pointer">
+                    <TableCell className="font-medium">
+                      <Link to="/ordens/$id" params={{ id: o.id }} className="hover:underline">{o.numero_os}</Link>
+                    </TableCell>
+                    <TableCell>{o.clientes?.nome ?? "—"}</TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className={OS_STATUS_CLASS[o.status as OsStatus]}>
+                        {OS_STATUS_LABEL[o.status as OsStatus]}
+                      </Badge>
+                      {atrasada && <Badge variant="outline" className="ml-2 bg-destructive/15 text-destructive border-destructive/30">Atrasada</Badge>}
+                    </TableCell>
+                    <TableCell>{formatDate(o.data_entrega_prev)}</TableCell>
+                    <TableCell className="text-right">{formatBRL(Number(o.valor_total) || 0)}</TableCell>
+                  </TableRow>
+                );
+              })}
+              {recentes.length === 0 && (
+                <TableRow><TableCell colSpan={5} className="text-center py-8 text-muted-foreground">Nenhuma O.S. cadastrada ainda.</TableCell></TableRow>
               )}
             </TableBody>
           </Table>
@@ -278,34 +176,20 @@ function ClienteDetail() {
   );
 }
 
-function Metric({
-  icon: Icon,
-  label,
-  value,
-  tone,
-}: {
-  icon: React.ComponentType<{ className?: string }>;
-  label: string;
-  value: number | string;
-  tone?: "primary" | "danger" | "success";
-}) {
-  const t =
-    tone === "primary"
-      ? "text-primary"
-      : tone === "danger"
-        ? "text-destructive"
-        : tone === "success"
-          ? "text-success"
-          : "";
+function MetricCard({ title, value, icon, tone }: { title: string; value: string; icon: React.ReactNode; tone?: "danger" }) {
   return (
-    <Card>
-      <CardContent className="p-4">
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <Icon className="h-4 w-4" />
-          {label}
+    <Card className={tone === "danger" ? "border-destructive/40" : ""}>
+      <CardContent className="p-5">
+        <div className="flex items-center justify-between">
+          <div className="text-sm text-muted-foreground">{title}</div>
+          {icon}
         </div>
-        <div className={`text-2xl font-semibold mt-2 ${t}`}>{value}</div>
+        <div className="text-2xl font-semibold mt-2">{value}</div>
       </CardContent>
     </Card>
   );
+}
+
+function EmptyChart() {
+  return <div className="h-full flex items-center justify-center text-sm text-muted-foreground">Sem dados para exibir</div>;
 }
