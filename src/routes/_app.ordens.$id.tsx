@@ -183,8 +183,21 @@ function OsDetail() {
     a.click();
   }
 
-  // ---- Nota Fiscal: upload do PDF + extração automática de data e valor ----
+  // ---- Notas Fiscais: uma O.S. pode ter várias (faturamento parcial/múltiplo) ----
+  const { data: notasFiscais } = useQuery({
+    queryKey: ["os-notas-fiscais", id],
+    queryFn: async () =>
+      (
+        await supabase
+          .from("os_notas_fiscais")
+          .select("*")
+          .eq("os_id", id)
+          .order("data_emissao", { ascending: false })
+      ).data ?? [],
+  });
+
   const nfFileRef = useRef<HTMLInputElement>(null);
+  const [nfFormAberto, setNfFormAberto] = useState(false);
   const [nfArquivo, setNfArquivo] = useState<File | null>(null);
   const [nfProcessando, setNfProcessando] = useState(false);
   const [nfExtraiuAlgo, setNfExtraiuAlgo] = useState(true);
@@ -194,6 +207,7 @@ function OsDetail() {
 
   async function onSelecionarNf(file: File) {
     setNfArquivo(file);
+    setNfFormAberto(true);
     setNfProcessando(true);
     const r = await processarNotaFiscalPdf(file);
     setNfData(r.data ?? "");
@@ -209,6 +223,7 @@ function OsDetail() {
 
   function cancelarNf() {
     setNfArquivo(null);
+    setNfFormAberto(false);
     setNfData("");
     setNfValor("");
     setNfNumero("");
@@ -229,42 +244,55 @@ function OsDetail() {
         .upload(path, nfArquivo, { contentType: "application/pdf" });
       if (upErr) throw upErr;
 
-      const { data: anexo, error: anexoErr } = await supabase
-        .from("os_anexos")
-        .insert({
-          os_id: id,
-          storage_path: path,
-          nome: nfArquivo.name,
-          mime_type: "application/pdf",
-          tamanho: nfArquivo.size,
-          uploaded_by: user.id,
-          tipo: "nota_fiscal",
-        })
-        .select("id")
-        .single();
-      if (anexoErr) throw anexoErr;
-
-      const { error: updErr } = await supabase
-        .from("ordens_servico")
-        .update({
-          valor_faturado_real: valorNum,
-          data_faturamento_real: nfData,
-          numero_nota_fiscal: nfNumero || null,
-          nota_fiscal_anexo_id: anexo.id,
-        })
-        .eq("id", id);
-      if (updErr) throw updErr;
+      const { error: nfErr } = await supabase.from("os_notas_fiscais").insert({
+        os_id: id,
+        numero_nota_fiscal: nfNumero || null,
+        valor: valorNum,
+        data_emissao: nfData,
+        storage_path: path,
+        nome_arquivo: nfArquivo.name,
+        uploaded_by: user.id,
+      });
+      if (nfErr) throw nfErr;
     },
     onSuccess: () => {
-      toast.success("Nota fiscal registrada. Faturamento real atualizado.");
-      qc.invalidateQueries({ queryKey: ["os", id] });
-      qc.invalidateQueries({ queryKey: ["os-anexos", id] });
+      toast.success("Nota fiscal anexada.");
+      qc.invalidateQueries({ queryKey: ["os-notas-fiscais", id] });
       qc.invalidateQueries({ queryKey: ["ordens"] });
       qc.invalidateQueries({ queryKey: ["dashboard-os"] });
       cancelarNf();
     },
     onError: (e: Error) => toast.error(e.message),
   });
+
+  const removerNf = useMutation({
+    mutationFn: async (nf: { id: string; storage_path: string }) => {
+      await supabase.storage.from("os-files").remove([nf.storage_path]);
+      const { error } = await supabase.from("os_notas_fiscais").delete().eq("id", nf.id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success("Nota fiscal removida.");
+      qc.invalidateQueries({ queryKey: ["os-notas-fiscais", id] });
+      qc.invalidateQueries({ queryKey: ["dashboard-os"] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  async function baixarNf(path: string, nome: string) {
+    const { data, error } = await supabase.storage.from("os-files").createSignedUrl(path, 60);
+    if (error || !data) {
+      toast.error(error?.message ?? "Falha");
+      return;
+    }
+    const a = document.createElement("a");
+    a.href = data.signedUrl;
+    a.download = nome;
+    a.target = "_blank";
+    a.click();
+  }
+
+  const totalFaturadoNf = (notasFiscais ?? []).reduce((s, n) => s + Number(n.valor || 0), 0);
 
   const [edit, setEdit] = useState<Record<string, unknown>>({});
   useEffect(() => {
@@ -705,34 +733,73 @@ function OsDetail() {
             </CardContent>
           </Card>
 
-          <Card className={os.valor_faturado_real ? "border-success/40" : undefined}>
+          <Card
+            className={notasFiscais && notasFiscais.length > 0 ? "border-success/40" : undefined}
+          >
             <CardHeader>
               <CardTitle className="text-base flex items-center gap-2">
                 <Receipt className="h-4 w-4" />
-                Nota Fiscal / Faturamento real
+                Notas Fiscais / Faturamento real
               </CardTitle>
               <CardDescription>
-                Anexe o PDF da nota fiscal para registrar a data e o valor realmente faturados.
+                Anexe uma ou mais notas fiscais (PDF) desta O.S. — útil para faturamento parcelado.
+                {notasFiscais && notasFiscais.length > 0 && (
+                  <>
+                    {" "}
+                    Total faturado: <b className="text-foreground">
+                      {formatBRL(totalFaturadoNf)}
+                    </b>{" "}
+                    em {notasFiscais.length} nota{notasFiscais.length === 1 ? "" : "s"}.
+                  </>
+                )}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
-              {os.valor_faturado_real != null && os.data_faturamento_real && !nfArquivo && (
-                <div className="rounded-md border border-success/30 bg-success/5 p-3 text-sm space-y-1">
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Faturado em</span>
-                    <span className="font-medium">{formatDate(os.data_faturamento_real)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Valor real</span>
-                    <span className="font-medium">{formatBRL(os.valor_faturado_real)}</span>
-                  </div>
-                  {os.numero_nota_fiscal && (
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Nº da NF</span>
-                      <span className="font-medium">{os.numero_nota_fiscal}</span>
-                    </div>
-                  )}
-                </div>
+              {notasFiscais && notasFiscais.length > 0 && (
+                <ul className="space-y-2">
+                  {notasFiscais.map((nf) => (
+                    <li
+                      key={nf.id}
+                      className="flex items-center justify-between gap-2 text-sm border rounded-md p-2"
+                    >
+                      <button
+                        className="flex-1 min-w-0 text-left hover:underline"
+                        onClick={() => baixarNf(nf.storage_path, nf.nome_arquivo)}
+                      >
+                        <div className="flex items-center gap-1.5 truncate">
+                          <Paperclip className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                          <span className="truncate">
+                            {nf.numero_nota_fiscal
+                              ? `NF ${nf.numero_nota_fiscal}`
+                              : nf.nome_arquivo}
+                          </span>
+                        </div>
+                        <div className="text-xs text-muted-foreground mt-0.5">
+                          {formatDate(nf.data_emissao)} · {formatBRL(nf.valor)}
+                        </div>
+                      </button>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-7 w-7 shrink-0"
+                        onClick={() => baixarNf(nf.storage_path, nf.nome_arquivo)}
+                      >
+                        <Download className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-7 w-7 shrink-0 text-destructive"
+                        onClick={() =>
+                          confirm("Remover esta nota fiscal?") &&
+                          removerNf.mutate({ id: nf.id, storage_path: nf.storage_path })
+                        }
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
               )}
 
               <input
@@ -746,7 +813,7 @@ function OsDetail() {
                 }}
               />
 
-              {!nfArquivo ? (
+              {!nfFormAberto ? (
                 <Button
                   size="sm"
                   variant="outline"
@@ -755,16 +822,14 @@ function OsDetail() {
                   onClick={() => nfFileRef.current?.click()}
                 >
                   <Upload className="h-4 w-4" />
-                  {os.valor_faturado_real != null
-                    ? "Substituir nota fiscal"
-                    : "Anexar nota fiscal (PDF)"}
+                  Anexar nota fiscal (PDF)
                 </Button>
               ) : (
                 <div className="space-y-3 border rounded-md p-3">
                   <div className="flex items-center justify-between text-sm">
                     <span className="flex items-center gap-1.5 min-w-0 truncate">
                       <Paperclip className="h-3.5 w-3.5 shrink-0" />
-                      {nfArquivo.name}
+                      {nfArquivo?.name}
                     </span>
                     <Button
                       size="icon"
