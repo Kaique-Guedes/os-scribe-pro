@@ -35,7 +35,7 @@ import {
 import { toast } from "sonner";
 import { ArrowLeft, Wallet, ClipboardList, TrendingUp, Pencil } from "lucide-react";
 
-export const Route = createFileRoute("/_app/clientes/$id")({
+export const Route = createFileRoute("/_app/dashboard")({
   head: () => ({ meta: [{ title: "Cliente — Sartori Group" }] }),
   component: ClienteDetail,
 });
