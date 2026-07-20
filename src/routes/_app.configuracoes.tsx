@@ -145,49 +145,87 @@ function InviteUserDialog() {
   const [email, setEmail] = useState("");
   const [nome, setNome] = useState("");
   const [role, setRole] = useState<AppRole>("viewer");
+  const [customPass, setCustomPass] = useState("");
   const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<{ email: string; password: string } | null>(null);
+
+  function reset() {
+    setEmail(""); setNome(""); setRole("viewer"); setCustomPass(""); setResult(null);
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
     try {
-      await invite({ data: { email: email.trim(), nome: nome.trim() || undefined, role } });
-      toast.success(`Convite enviado para ${email}`);
-      setEmail(""); setNome(""); setRole("viewer"); setOpen(false);
+      const res = await invite({
+        data: {
+          email: email.trim(),
+          nome: nome.trim() || undefined,
+          role,
+          password: customPass.trim() ? customPass.trim() : undefined,
+        },
+      });
+      setResult({ email: res.email, password: res.password });
+      toast.success(`Usuário ${res.email} criado`);
       qc.invalidateQueries({ queryKey: ["usuarios-config"] });
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Falha ao convidar usuário");
+      toast.error(err instanceof Error ? err.message : "Falha ao criar usuário");
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) reset(); }}>
       <DialogTrigger asChild>
-        <Button size="sm"><UserPlus className="h-4 w-4 mr-2" />Convidar usuário</Button>
+        <Button size="sm"><UserPlus className="h-4 w-4 mr-2" />Criar usuário</Button>
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Convidar novo usuário</DialogTitle>
-          <DialogDescription>Um e-mail com link de acesso será enviado. O usuário define a senha ao entrar.</DialogDescription>
+          <DialogTitle>Criar novo usuário</DialogTitle>
+          <DialogDescription>A conta é criada já ativa. Copie a senha e repasse ao usuário — ele pode alterá-la depois.</DialogDescription>
         </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div><Label>E-mail</Label><Input type="email" required value={email} onChange={(e)=>setEmail(e.target.value)} placeholder="usuario@sartorigroup.com.br" /></div>
-          <div><Label>Nome (opcional)</Label><Input value={nome} onChange={(e)=>setNome(e.target.value)} placeholder="Nome do usuário" /></div>
-          <div>
-            <Label>Papel inicial</Label>
-            <Select value={role} onValueChange={(v)=>setRole(v as AppRole)}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>{ALL_ROLES.map(r => <SelectItem key={r} value={r}>{ROLE_LABEL[r]}</SelectItem>)}</SelectContent>
-            </Select>
+
+        {result ? (
+          <div className="space-y-4">
+            <div className="rounded-md border bg-muted/50 p-4 space-y-2 text-sm">
+              <div><span className="text-muted-foreground">E-mail: </span><b>{result.email}</b></div>
+              <div className="flex items-center gap-2">
+                <span className="text-muted-foreground">Senha:</span>
+                <code className="px-2 py-1 rounded bg-background border font-mono text-sm">{result.password}</code>
+                <Button type="button" size="sm" variant="outline" onClick={() => { navigator.clipboard.writeText(result.password); toast.success("Senha copiada"); }}>Copiar</Button>
+              </div>
+              <p className="text-xs text-muted-foreground pt-2">Envie estas credenciais ao usuário por um canal seguro. Esta senha não será exibida novamente.</p>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={reset}>Criar outro</Button>
+              <Button type="button" onClick={() => { setOpen(false); reset(); }}>Concluir</Button>
+            </DialogFooter>
           </div>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={()=>setOpen(false)} disabled={loading}>Cancelar</Button>
-            <Button type="submit" disabled={loading || !email}>{loading ? "Enviando..." : "Enviar convite"}</Button>
-          </DialogFooter>
-        </form>
+        ) : (
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div><Label>E-mail</Label><Input type="email" required value={email} onChange={(e)=>setEmail(e.target.value)} placeholder="usuario@sartorigroup.com.br" /></div>
+            <div><Label>Nome (opcional)</Label><Input value={nome} onChange={(e)=>setNome(e.target.value)} placeholder="Nome do usuário" /></div>
+            <div>
+              <Label>Papel</Label>
+              <Select value={role} onValueChange={(v)=>setRole(v as AppRole)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>{ALL_ROLES.map(r => <SelectItem key={r} value={r}>{ROLE_LABEL[r]}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Senha (opcional)</Label>
+              <Input type="text" value={customPass} onChange={(e)=>setCustomPass(e.target.value)} placeholder="Deixe em branco para gerar automaticamente" minLength={8} />
+              <p className="text-xs text-muted-foreground mt-1">Mínimo 8 caracteres. Se vazio, uma senha segura será gerada.</p>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={()=>setOpen(false)} disabled={loading}>Cancelar</Button>
+              <Button type="submit" disabled={loading || !email}>{loading ? "Criando..." : "Criar usuário"}</Button>
+            </DialogFooter>
+          </form>
+        )}
       </DialogContent>
     </Dialog>
   );
 }
+
