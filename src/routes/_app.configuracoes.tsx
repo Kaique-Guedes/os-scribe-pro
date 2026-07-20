@@ -113,10 +113,33 @@ function ConfigPage() {
                   </TableCell>
                   <TableCell>
                     {admin && (
-                      <Select value={u.roles[0] ?? ""} onValueChange={(v) => setRole.mutate({ userId: u.id, role: v as AppRole })}>
-                        <SelectTrigger className="w-48"><SelectValue placeholder="Definir papel" /></SelectTrigger>
-                        <SelectContent>{ALL_ROLES.map(r => <SelectItem key={r} value={r}>{ROLE_LABEL[r]}</SelectItem>)}</SelectContent>
-                      </Select>
+                      <div className="flex items-center gap-2">
+                        <Select value={u.roles[0] ?? ""} onValueChange={(v) => setRole.mutate({ userId: u.id, role: v as AppRole })}>
+                          <SelectTrigger className="w-48"><SelectValue placeholder="Definir papel" /></SelectTrigger>
+                          <SelectContent>{ALL_ROLES.map(r => <SelectItem key={r} value={r}>{ROLE_LABEL[r]}</SelectItem>)}</SelectContent>
+                        </Select>
+                        {u.id !== user?.id && (
+                          <AlertDialog>
+                            <AlertDialogTrigger asChild>
+                              <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive" title="Remover usuário">
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </AlertDialogTrigger>
+                            <AlertDialogContent>
+                              <AlertDialogHeader>
+                                <AlertDialogTitle>Remover usuário</AlertDialogTitle>
+                                <AlertDialogDescription>
+                                  Tem certeza que deseja remover <b>{u.email}</b>? Esta ação é permanente e o usuário perderá o acesso ao sistema.
+                                </AlertDialogDescription>
+                              </AlertDialogHeader>
+                              <AlertDialogFooter>
+                                <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                                <AlertDialogAction onClick={() => removeUser.mutate(u.id)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Remover</AlertDialogAction>
+                              </AlertDialogFooter>
+                            </AlertDialogContent>
+                          </AlertDialog>
+                        )}
+                      </div>
                     )}
                   </TableCell>
                 </TableRow>
