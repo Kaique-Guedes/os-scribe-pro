@@ -10,12 +10,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger, DialogDescription } from "@/components/ui/dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useSession, useRoles, isAdmin } from "@/hooks/use-auth";
 import { ROLE_LABEL, type AppRole } from "@/lib/os-utils";
-import { inviteUser } from "@/lib/admin-users.functions";
+import { inviteUser, deleteUser } from "@/lib/admin-users.functions";
 import { toast } from "sonner";
-import { Shield, Info, UserPlus } from "lucide-react";
+import { Shield, Info, UserPlus, Trash2 } from "lucide-react";
 
 export const Route = createFileRoute("/_app/configuracoes")({
   head: () => ({ meta: [{ title: "Configurações — Sartori Group" }] }),
@@ -53,6 +54,13 @@ function ConfigPage() {
       if (error) throw error;
     },
     onSuccess: () => { toast.success("Permissão atualizada"); qc.invalidateQueries({ queryKey: ["usuarios-config"] }); },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const removeUserFn = useServerFn(deleteUser);
+  const removeUser = useMutation({
+    mutationFn: async (userId: string) => { await removeUserFn({ data: { userId } }); },
+    onSuccess: () => { toast.success("Usuário removido"); qc.invalidateQueries({ queryKey: ["usuarios-config"] }); },
     onError: (e: Error) => toast.error(e.message),
   });
 
@@ -105,10 +113,33 @@ function ConfigPage() {
                   </TableCell>
                   <TableCell>
                     {admin && (
-                      <Select value={u.roles[0] ?? ""} onValueChange={(v) => setRole.mutate({ userId: u.id, role: v as AppRole })}>
-                        <SelectTrigger className="w-48"><SelectValue placeholder="Definir papel" /></SelectTrigger>
-                        <SelectContent>{ALL_ROLES.map(r => <SelectItem key={r} value={r}>{ROLE_LABEL[r]}</SelectItem>)}</SelectContent>
-                      </Select>
+                      <div className="flex items-center gap-2">
+                        <Select value={u.roles[0] ?? ""} onValueChange={(v) => setRole.mutate({ userId: u.id, role: v as AppRole })}>
+                          <SelectTrigger className="w-48"><SelectValue placeholder="Definir papel" /></SelectTrigger>
+                          <SelectContent>{ALL_ROLES.map(r => <SelectItem key={r} value={r}>{ROLE_LABEL[r]}</SelectItem>)}</SelectContent>
+                        </Select>
+                        {u.id !== user?.id && (
+                          <AlertDialog>
+                            <AlertDialogTrigger asChild>
+                              <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive" title="Remover usuário">
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </AlertDialogTrigger>
+                            <AlertDialogContent>
+                              <AlertDialogHeader>
+                                <AlertDialogTitle>Remover usuário</AlertDialogTitle>
+                                <AlertDialogDescription>
+                                  Tem certeza que deseja remover <b>{u.email}</b>? Esta ação é permanente e o usuário perderá o acesso ao sistema.
+                                </AlertDialogDescription>
+                              </AlertDialogHeader>
+                              <AlertDialogFooter>
+                                <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                                <AlertDialogAction onClick={() => removeUser.mutate(u.id)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Remover</AlertDialogAction>
+                              </AlertDialogFooter>
+                            </AlertDialogContent>
+                          </AlertDialog>
+                        )}
+                      </div>
                     )}
                   </TableCell>
                 </TableRow>
