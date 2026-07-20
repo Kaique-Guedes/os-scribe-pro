@@ -57,6 +57,13 @@ function ConfigPage() {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  const removeUserFn = useServerFn(deleteUser);
+  const removeUser = useMutation({
+    mutationFn: async (userId: string) => { await removeUserFn({ data: { userId } }); },
+    onSuccess: () => { toast.success("Usuário removido"); qc.invalidateQueries({ queryKey: ["usuarios-config"] }); },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   return (
     <div className="p-6 max-w-5xl mx-auto space-y-5">
       <div>
