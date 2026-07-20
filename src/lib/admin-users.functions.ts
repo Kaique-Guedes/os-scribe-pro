@@ -6,36 +6,47 @@ const Input = z.object({
   email: z.string().email(),
   nome: z.string().trim().optional(),
   role: z.enum(["admin", "pcp", "producao", "viewer"]).default("viewer"),
+  password: z.string().min(8).optional(),
 });
+
+function generatePassword() {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+  let out = "";
+  const bytes = new Uint8Array(12);
+  crypto.getRandomValues(bytes);
+  for (let i = 0; i < bytes.length; i++) out += chars[bytes[i] % chars.length];
+  return out + "!9";
+}
 
 export const inviteUser = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) => Input.parse(d))
   .handler(async ({ data, context }) => {
-    // 1) Autoriza: caller deve ser admin
+    // Autoriza: caller deve ser admin
     const { data: isAdmin, error: roleErr } = await context.supabase.rpc("has_role", {
       _user_id: context.userId,
       _role: "admin",
     });
     if (roleErr) throw new Error(roleErr.message);
-    if (!isAdmin) throw new Error("Apenas administradores podem convidar usuários.");
+    if (!isAdmin) throw new Error("Apenas administradores podem criar usuários.");
 
-    // 2) Convida via Auth Admin API (envia e-mail de convite com magic link)
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const redirectTo = process.env.SITE_URL
-      ? `${process.env.SITE_URL}/auth`
-      : undefined;
 
-    const { data: invited, error: inviteErr } =
-      await supabaseAdmin.auth.admin.inviteUserByEmail(data.email, {
-        data: { nome: data.nome ?? data.email.split("@")[0] },
-        redirectTo,
-      });
-    if (inviteErr) throw new Error(inviteErr.message);
-    const newUserId = invited.user?.id;
-    if (!newUserId) throw new Error("Convite enviado, mas usuário não retornado.");
+    const password = data.password ?? generatePassword();
+    const nome = data.nome ?? data.email.split("@")[0];
 
-    // 3) Define o papel escolhido (o trigger cria 'viewer' por padrão)
+    // Cria o usuário já confirmado (login imediato com a senha gerada)
+    const { data: created, error: createErr } = await supabaseAdmin.auth.admin.createUser({
+      email: data.email,
+      password,
+      email_confirm: true,
+      user_metadata: { nome },
+    });
+    if (createErr) throw new Error(createErr.message);
+    const newUserId = created.user?.id;
+    if (!newUserId) throw new Error("Usuário não retornado após criação.");
+
+    // Define o papel escolhido (trigger cria 'viewer' por padrão)
     if (data.role !== "viewer") {
       await supabaseAdmin.from("user_roles").delete().eq("user_id", newUserId);
       const { error: rErr } = await supabaseAdmin
@@ -44,5 +55,5 @@ export const inviteUser = createServerFn({ method: "POST" })
       if (rErr) throw new Error(rErr.message);
     }
 
-    return { ok: true, userId: newUserId, email: data.email };
+    return { ok: true, userId: newUserId, email: data.email, password };
   });
