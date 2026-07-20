@@ -10,12 +10,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger, DialogDescription } from "@/components/ui/dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useSession, useRoles, isAdmin } from "@/hooks/use-auth";
 import { ROLE_LABEL, type AppRole } from "@/lib/os-utils";
-import { inviteUser } from "@/lib/admin-users.functions";
+import { inviteUser, deleteUser } from "@/lib/admin-users.functions";
 import { toast } from "sonner";
-import { Shield, Info, UserPlus } from "lucide-react";
+import { Shield, Info, UserPlus, Trash2 } from "lucide-react";
 
 export const Route = createFileRoute("/_app/configuracoes")({
   head: () => ({ meta: [{ title: "Configurações — Sartori Group" }] }),
