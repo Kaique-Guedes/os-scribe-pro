@@ -1,0 +1,146 @@
+{
+  "version": 1,
+  "sdk_version": "0.24.0",
+  "path": "/mcp",
+  "auth": {
+    "type": "oauth",
+    "issuer": "https://gmivoxykumzdllazeftk.supabase.co/auth/v1",
+    "accepted_audiences": [
+      "authenticated"
+    ]
+  },
+  "mcp": {
+    "server": {
+      "name": "sartori-os-mcp",
+      "version": "0.1.0",
+      "title": "Sartori OS — Ordens de Serviço"
+    },
+    "tools": [
+      {
+        "name": "list_ordens_servico",
+        "title": "Listar ordens de serviço",
+        "description": "Lista ordens de serviço (O.S.) do usuário autenticado. Suporta filtro por status e busca textual em código/projeto.",
+        "annotations": {
+          "readOnlyHint": true,
+          "idempotentHint": true,
+          "openWorldHint": false
+        },
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {
+            "status": {
+              "description": "Filtrar por status.",
+              "type": "string",
+              "enum": [
+                "aberta",
+                "aguardando_material",
+                "em_producao",
+                "em_pintura",
+                "pronta",
+                "entregue",
+                "atrasada",
+                "cancelada"
+              ]
+            },
+            "search": {
+              "description": "Texto para busca em código ou projeto.",
+              "type": "string"
+            },
+            "limit": {
+              "description": "Máximo de registros (padrão 25).",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          }
+        },
+        "outputSchema": null
+      },
+      {
+        "name": "get_ordem_servico",
+        "title": "Detalhar ordem de serviço",
+        "description": "Retorna os detalhes completos de uma O.S., incluindo etapas, comentários e histórico.",
+        "annotations": {
+          "readOnlyHint": true,
+          "idempotentHint": true,
+          "openWorldHint": false
+        },
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "description": "ID (UUID) da ordem de serviço."
+            }
+          },
+          "required": [
+            "id"
+          ]
+        },
+        "outputSchema": null
+      },
+      {
+        "name": "list_clientes",
+        "title": "Listar clientes",
+        "description": "Lista clientes cadastrados no sistema. Suporta busca por nome.",
+        "annotations": {
+          "readOnlyHint": true,
+          "idempotentHint": true,
+          "openWorldHint": false
+        },
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {
+            "search": {
+              "description": "Busca por nome/razão social.",
+              "type": "string"
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            }
+          }
+        },
+        "outputSchema": null
+      },
+      {
+        "name": "add_comentario_os",
+        "title": "Comentar em uma O.S.",
+        "description": "Adiciona um comentário a uma ordem de serviço em nome do usuário autenticado.",
+        "annotations": {
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "openWorldHint": false
+        },
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {
+            "os_id": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "description": "ID da ordem de serviço."
+            },
+            "texto": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Conteúdo do comentário."
+            }
+          },
+          "required": [
+            "os_id",
+            "texto"
+          ]
+        },
+        "outputSchema": null
+      }
+    ]
+  }
+}
