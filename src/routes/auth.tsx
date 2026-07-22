@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -11,11 +11,21 @@ import { toast } from "sonner";
 
 export const Route = createFileRoute("/auth")({
   head: () => ({ meta: [{ title: "Acessar — Sartori Group" }] }),
+  validateSearch: (s: Record<string, unknown>) => ({
+    next: typeof s.next === "string" ? s.next : "",
+  }),
   component: AuthPage,
 });
 
+function safeNext(next: string): string {
+  if (!next.startsWith("/") || next.startsWith("//")) return "/dashboard";
+  return next;
+}
+
 function AuthPage() {
-  const navigate = useNavigate();
+  const { next } = Route.useSearch();
+
+  const target = safeNext(next);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [nome, setNome] = useState("");
@@ -23,9 +33,9 @@ function AuthPage() {
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
-      if (data.session) navigate({ to: "/dashboard", replace: true });
+      if (data.session) window.location.replace(target);
     });
-  }, [navigate]);
+  }, [target]);
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
@@ -34,20 +44,22 @@ function AuthPage() {
     setLoading(false);
     if (error) { toast.error(error.message); return; }
     toast.success("Bem-vindo!");
-    navigate({ to: "/dashboard", replace: true });
+    window.location.replace(target);
   }
 
   async function handleSignup(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
+    const redirectTo = `${window.location.origin}${target}`;
     const { error } = await supabase.auth.signUp({
       email, password,
-      options: { emailRedirectTo: window.location.origin, data: { nome } },
+      options: { emailRedirectTo: redirectTo, data: { nome } },
     });
     setLoading(false);
     if (error) { toast.error(error.message); return; }
     toast.success("Conta criada. Peça ao administrador para liberar seu acesso.");
   }
+
 
   return (
     <div className="min-h-screen grid lg:grid-cols-2">
