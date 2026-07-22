@@ -29,7 +29,8 @@ import {
   type OsStatus,
   type EtapaTipo,
 } from "@/lib/os-utils";
-import { processarNotaFiscalPdf } from "@/lib/nota-fiscal-parser";
+import { extractNotaFiscalFromDocument } from "@/lib/nota-fiscal-extract.functions";
+import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
 import {
   ArrowLeft,
@@ -204,21 +205,41 @@ function OsDetail() {
   const [nfData, setNfData] = useState("");
   const [nfValor, setNfValor] = useState("");
   const [nfNumero, setNfNumero] = useState("");
+  const extractNfFn = useServerFn(extractNotaFiscalFromDocument);
 
   async function onSelecionarNf(file: File) {
+    if (file.size > 15 * 1024 * 1024) {
+      toast.error("Arquivo grande demais (máx 15MB)");
+      return;
+    }
     setNfArquivo(file);
     setNfFormAberto(true);
     setNfProcessando(true);
-    const r = await processarNotaFiscalPdf(file);
-    setNfData(r.data ?? "");
-    setNfValor(r.valor != null ? String(r.valor) : "");
-    setNfNumero(r.numero ?? "");
-    setNfExtraiuAlgo(r.sucesso);
-    setNfProcessando(false);
-    if (!r.sucesso)
-      toast.warning(
-        "Não conseguimos identificar automaticamente os dados do PDF. Confira e preencha manualmente.",
-      );
+    try {
+      const buf = await file.arrayBuffer();
+      let binary = "";
+      const bytes = new Uint8Array(buf);
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      const dataBase64 = btoa(binary);
+      const r = await extractNfFn({
+        data: { filename: file.name, mimeType: file.type || "application/pdf", dataBase64 },
+      });
+      setNfData(r.data_emissao ?? "");
+      setNfValor(r.valor_total != null ? String(r.valor_total) : "");
+      setNfNumero(r.numero_nota_fiscal ?? "");
+      const extraiuAlgo = r.data_emissao != null || r.valor_total != null;
+      setNfExtraiuAlgo(extraiuAlgo);
+      if (!extraiuAlgo)
+        toast.warning(
+          "A IA não conseguiu identificar os dados dessa nota. Confira e preencha manualmente.",
+        );
+      else toast.success("Dados extraídos pela IA! Revise antes de salvar.");
+    } catch (e) {
+      setNfExtraiuAlgo(false);
+      toast.error(`Falha na leitura por IA: ${(e as Error).message}. Preencha manualmente.`);
+    } finally {
+      setNfProcessando(false);
+    }
   }
 
   function cancelarNf() {
@@ -843,20 +864,20 @@ function OsDetail() {
 
                   {nfProcessando ? (
                     <p className="text-sm text-muted-foreground">
-                      Lendo o PDF e identificando data e valor...
+                      Analisando a nota fiscal com IA...
                     </p>
                   ) : (
                     <>
                       {!nfExtraiuAlgo && (
                         <div className="flex items-start gap-2 text-xs text-warning-foreground bg-warning/10 border border-warning/30 rounded-md p-2">
-                          <FileWarning className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                          Não conseguimos ler automaticamente esse PDF (comum em notas escaneadas/em
-                          imagem). Preencha os campos manualmente.
+                          <FileWarning className="h-3.5 w-3.5 shrink-0 mt-0.5" />A IA não conseguiu
+                          identificar os dados desta nota (documento ilegível ou fora do padrão).
+                          Preencha os campos manualmente.
                         </div>
                       )}
                       <p className="text-xs text-muted-foreground">
-                        Confira os dados abaixo antes de salvar — a leitura automática pode errar
-                        dependendo do layout da nota.
+                        Confira os dados extraídos pela IA antes de salvar — sempre revise antes de
+                        confirmar.
                       </p>
                       <div className="grid grid-cols-2 gap-2">
                         <div>
