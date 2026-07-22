@@ -34,6 +34,29 @@ const SYSTEM_PROMPT = `Você é um assistente que extrai informações de pedido
 Analise o documento anexado e retorne os dados estruturados. Se um campo não estiver presente, retorne null.
 Datas devem estar em formato ISO YYYY-MM-DD. Valores monetários devem ser números em reais (sem R$, ponto como separador decimal). Não invente informação.`;
 
+// Chama a API do Gemini diretamente (Google AI Studio), sem depender do gateway da Lovable.
+// Requer a variável de ambiente GEMINI_API_KEY (gerada em https://aistudio.google.com/apikey).
+const GEMINI_MODEL = "gemini-2.5-pro";
+
+async function callGemini(apiKey: string, body: unknown) {
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": apiKey,
+      },
+      body: JSON.stringify(body),
+    },
+  );
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(`Gemini API ${res.status}: ${t.slice(0, 300)}`);
+  }
+  return res.json();
+}
+
 export const extractOsFromDocument = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((data: unknown) => Input.parse(data))
@@ -41,6 +64,8 @@ export const extractOsFromDocument = createServerFn({ method: "POST" })
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) throw new Error("GEMINI_API_KEY ausente");
 
+    // Schema no formato aceito pela API nativa do Gemini (subconjunto de OpenAPI 3.0,
+    // usa "nullable" em vez de union type com "null").
     const schema = {
       type: "OBJECT",
       properties: {
@@ -64,16 +89,44 @@ export const extractOsFromDocument = createServerFn({ method: "POST" })
         descricao: { type: "STRING", nullable: true },
         fora_escopo: { type: "STRING", nullable: true },
       },
+      required: [
+        "numero_os",
+        "numero_ss",
+        "numero_pedido",
+        "projeto",
+        "cliente_nome",
+        "solicitante",
+        "gestor",
+        "orcamentista",
+        "data_inicio_prev",
+        "data_entrega_prev",
+        "unidade",
+        "quantidade",
+        "valor_unit",
+        "valor_total",
+        "peso_kg",
+        "local_entrega",
+        "tipo_frete",
+        "descricao",
+        "fora_escopo",
+      ],
     };
 
     const body = {
-      systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+      systemInstruction: {
+        parts: [{ text: SYSTEM_PROMPT }],
+      },
       contents: [
         {
           role: "user",
           parts: [
             { text: "Extraia os dados do documento anexo para preencher uma Ordem de Serviço." },
-            { inlineData: { mimeType: data.mimeType, data: data.dataBase64 } },
+            {
+              inlineData: {
+                mimeType: data.mimeType,
+                data: data.dataBase64,
+              },
+            },
           ],
         },
       ],
@@ -83,23 +136,14 @@ export const extractOsFromDocument = createServerFn({ method: "POST" })
       },
     };
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${encodeURIComponent(apiKey)}`;
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) {
-      const t = await res.text();
-      throw new Error(`Gemini ${res.status}: ${t.slice(0, 300)}`);
-    }
-    const json = await res.json();
+    const json = await callGemini(apiKey, body);
     const text = json?.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!text) throw new Error("Resposta vazia da IA");
+    let parsed: ExtractedOs;
     try {
-      return JSON.parse(text) as ExtractedOs;
+      parsed = typeof text === "string" ? JSON.parse(text) : text;
     } catch {
       throw new Error("A IA não retornou JSON válido");
     }
+    return parsed;
   });
-
