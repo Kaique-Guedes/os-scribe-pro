@@ -36,7 +36,7 @@ Datas devem estar em formato ISO YYYY-MM-DD. Valores monetários devem ser núme
 
 // Chama a API do Gemini diretamente (Google AI Studio), sem depender do gateway da Lovable.
 // Requer a variável de ambiente GEMINI_API_KEY (gerada em https://aistudio.google.com/apikey).
-const GEMINI_MODEL = "gemini-2.5-pro";
+const GEMINI_MODEL = "gemini-2.5-flash";
 
 async function callGemini(apiKey: string, body: unknown) {
   const res = await fetch(
