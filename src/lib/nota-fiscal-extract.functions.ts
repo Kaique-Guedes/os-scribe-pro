@@ -23,7 +23,7 @@ Se um campo não estiver presente ou legível, retorne null. Não invente inform
 
 // Chama a API do Gemini diretamente (Google AI Studio).
 // Requer a variável de ambiente GEMINI_API_KEY (gerada em https://aistudio.google.com/apikey).
-const GEMINI_MODEL = "gemini-2.5-flash";
+const GEMINI_MODEL = "gemini-3.5-flash-lite";
 
 async function callGemini(apiKey: string, body: unknown) {
   const res = await fetch(
