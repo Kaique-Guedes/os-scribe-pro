@@ -45,6 +45,7 @@ const _cfEnv = await resolveCloudflareEnv();
 
 function createSupabaseAdminClient() {
   const SUPABASE_URL =
+    (import.meta.env.VITE_SUPABASE_URL as string | undefined) ||
     process.env.SUPABASE_URL ||
     process.env.VITE_SUPABASE_URL ||
     _cfEnv.SUPABASE_URL ||
