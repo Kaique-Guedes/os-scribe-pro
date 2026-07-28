@@ -64,7 +64,22 @@ export const requireSupabaseAuth = createMiddleware({ type: 'function' }).server
         ...(!SUPABASE_URL ? ['SUPABASE_URL (ou VITE_SUPABASE_URL)'] : []),
         ...(!SUPABASE_PUBLISHABLE_KEY ? ['SUPABASE_PUBLISHABLE_KEY (ou VITE_SUPABASE_PUBLISHABLE_KEY)'] : []),
       ];
-      const message = `Missing Supabase environment variable(s): ${missing.join(', ')}. Configure as variáveis de ambiente no host (Cloudflare).`;
+      // DIAGNÓSTICO TEMPORÁRIO: mostra o que cada fonte retornou (sem vazar o valor
+      // inteiro das chaves — só se está presente/ausente e os primeiros caracteres).
+      const peek = (v: unknown) => (typeof v === 'string' && v.length > 0 ? `"${v.slice(0, 8)}..." (len ${v.length})` : String(v));
+      const diag = [
+        `import.meta.env.VITE_SUPABASE_URL=${peek(import.meta.env.VITE_SUPABASE_URL)}`,
+        `import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY=${peek(import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY)}`,
+        `process.env.SUPABASE_URL=${peek(process.env.SUPABASE_URL)}`,
+        `process.env.VITE_SUPABASE_URL=${peek(process.env.VITE_SUPABASE_URL)}`,
+        `process.env.SUPABASE_PUBLISHABLE_KEY=${peek(process.env.SUPABASE_PUBLISHABLE_KEY)}`,
+        `process.env.VITE_SUPABASE_PUBLISHABLE_KEY=${peek(process.env.VITE_SUPABASE_PUBLISHABLE_KEY)}`,
+        `cfWorkers.env.SUPABASE_URL=${peek(cfSupabaseUrl)}`,
+        `cfWorkers.env.SUPABASE_PUBLISHABLE_KEY=${peek(cfSupabaseKey)}`,
+        `import.meta.env keys=${Object.keys(import.meta.env ?? {}).join(',')}`,
+        `process.env keys count=${Object.keys(process.env ?? {}).length}`,
+      ].join(' | ');
+      const message = `Missing Supabase environment variable(s): ${missing.join(', ')}. DIAG: ${diag}`;
       console.error(`[Supabase] ${message}`);
       throw new Error(message);
     }
