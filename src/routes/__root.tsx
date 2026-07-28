@@ -10,7 +10,6 @@ import {
 import { useEffect, type ReactNode } from "react";
 
 import appCss from "../styles.css?url";
-import { reportLovableError } from "../lib/lovable-error-reporting";
 import { supabase } from "@/integrations/supabase/client";
 import { Toaster } from "@/components/ui/sonner";
 
@@ -39,9 +38,6 @@ function NotFoundComponent() {
 function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
   console.error(error);
   const router = useRouter();
-  useEffect(() => {
-    reportLovableError(error, { boundary: "tanstack_root_error_component" });
-  }, [error]);
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
@@ -85,8 +81,6 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { name: "twitter:card", content: "summary" },
       { name: "twitter:title", content: "Sartori Group — Gestão de Ordens de Serviço" },
       { name: "twitter:description", content: "Sistema interno de PCP e produção para controle do ciclo de vida das O.S. da Sartori Group." },
-      { property: "og:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/c6ef1498-46cd-4fd1-b54f-8cc6fd00f68f/id-preview-6a1cf934--08d587ac-01a7-4ca3-a3d4-330141848999.lovable.app-1784032426204.png" },
-      { name: "twitter:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/c6ef1498-46cd-4fd1-b54f-8cc6fd00f68f/id-preview-6a1cf934--08d587ac-01a7-4ca3-a3d4-330141848999.lovable.app-1784032426204.png" },
     ],
     links: [
       { rel: "stylesheet", href: appCss },
