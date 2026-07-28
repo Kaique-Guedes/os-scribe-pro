@@ -32,12 +32,26 @@ function createSupabaseFetch(supabaseKey: string): typeof fetch {
 
 export const requireSupabaseAuth = createMiddleware({ type: 'function' }).server(
   async ({ next }) => {
-    // Fallback entre nomes com/sem prefixo VITE_: o Cloudflare Workers pode não
-    // popular process.env de forma confiável dependendo de como a variável foi
-    // configurada (build-time vs runtime), então aceitamos qualquer uma das duas.
-    const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+    // 1) process.env (funciona na maioria dos hosts Node-like)
+    // 2) fallback para as variáveis com prefixo VITE_
+    // 3) último fallback: ler direto do binding `env` do Cloudflare Workers,
+    //    já que o process.env pode não ser populado de forma confiável lá.
+    let cfSupabaseUrl: string | undefined;
+    let cfSupabaseKey: string | undefined;
+    try {
+      const cfWorkers = (await import('cloudflare:workers')) as { env?: Record<string, string> };
+      cfSupabaseUrl = cfWorkers.env?.SUPABASE_URL || cfWorkers.env?.VITE_SUPABASE_URL;
+      cfSupabaseKey = cfWorkers.env?.SUPABASE_PUBLISHABLE_KEY || cfWorkers.env?.VITE_SUPABASE_PUBLISHABLE_KEY;
+    } catch {
+      // Não estamos rodando no runtime do Cloudflare Workers (ex: dev local) — ignora.
+    }
+
+    const SUPABASE_URL =
+      process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || cfSupabaseUrl;
     const SUPABASE_PUBLISHABLE_KEY =
-      process.env.SUPABASE_PUBLISHABLE_KEY || process.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+      process.env.SUPABASE_PUBLISHABLE_KEY ||
+      process.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
+      cfSupabaseKey;
 
     if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
       const missing = [
