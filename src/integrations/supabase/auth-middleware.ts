@@ -32,10 +32,12 @@ function createSupabaseFetch(supabaseKey: string): typeof fetch {
 
 export const requireSupabaseAuth = createMiddleware({ type: 'function' }).server(
   async ({ next }) => {
-    // 1) process.env (funciona na maioria dos hosts Node-like)
-    // 2) fallback para as variáveis com prefixo VITE_
-    // 3) último fallback: ler direto do binding `env` do Cloudflare Workers,
-    //    já que o process.env pode não ser populado de forma confiável lá.
+    // 1) import.meta.env: o Vite substitui isso em tempo de BUILD (não depende do
+    //    runtime popular nada) — é o mesmo mecanismo que já funciona no cliente
+    //    (login/dashboard), então é a fonte mais confiável aqui.
+    // 2) process.env (funciona na maioria dos hosts Node-like)
+    // 3) fallback para as variáveis com prefixo VITE_ via process.env
+    // 4) último fallback: ler direto do binding `env` do Cloudflare Workers.
     let cfSupabaseUrl: string | undefined;
     let cfSupabaseKey: string | undefined;
     try {
@@ -47,8 +49,12 @@ export const requireSupabaseAuth = createMiddleware({ type: 'function' }).server
     }
 
     const SUPABASE_URL =
-      process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || cfSupabaseUrl;
+      (import.meta.env.VITE_SUPABASE_URL as string | undefined) ||
+      process.env.SUPABASE_URL ||
+      process.env.VITE_SUPABASE_URL ||
+      cfSupabaseUrl;
     const SUPABASE_PUBLISHABLE_KEY =
+      (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string | undefined) ||
       process.env.SUPABASE_PUBLISHABLE_KEY ||
       process.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
       cfSupabaseKey;
