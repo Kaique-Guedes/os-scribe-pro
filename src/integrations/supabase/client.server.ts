@@ -29,9 +29,28 @@ function createSupabaseFetch(supabaseKey: string): typeof fetch {
   };
 }
 
+async function resolveCloudflareEnv(): Promise<Record<string, string>> {
+  try {
+    const cfWorkers = (await import('cloudflare:workers')) as { env?: Record<string, string> };
+    return cfWorkers.env ?? {};
+  } catch {
+    // Não estamos rodando no runtime do Cloudflare Workers (ex: dev local) — ignora.
+    return {};
+  }
+}
+
+// Resolvido uma única vez (top-level await é seguro aqui: este módulo já é
+// carregado via import() dinâmico nos pontos de uso, nunca no bundle do cliente).
+const _cfEnv = await resolveCloudflareEnv();
+
 function createSupabaseAdminClient() {
-  const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
-  const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const SUPABASE_URL =
+    process.env.SUPABASE_URL ||
+    process.env.VITE_SUPABASE_URL ||
+    _cfEnv.SUPABASE_URL ||
+    _cfEnv.VITE_SUPABASE_URL;
+  const SUPABASE_SERVICE_ROLE_KEY =
+    process.env.SUPABASE_SERVICE_ROLE_KEY || _cfEnv.SUPABASE_SERVICE_ROLE_KEY;
 
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
     const missing = [
