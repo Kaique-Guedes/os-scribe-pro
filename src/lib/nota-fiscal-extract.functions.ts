@@ -49,14 +49,27 @@ export const extractNotaFiscalFromDocument = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) => Input.parse(data))
   .handler(async ({ data }): Promise<ExtractedNotaFiscal> => {
     let cfApiKey: string | undefined;
+    let cfImportError: string | undefined;
+    let cfEnvKeys: string[] = [];
     try {
       const cfWorkers = (await import("cloudflare:workers")) as { env?: Record<string, string> };
       cfApiKey = cfWorkers.env?.GEMINI_API_KEY;
-    } catch {
-      // Não estamos rodando no runtime do Cloudflare Workers (ex: dev local) — ignora.
+      cfEnvKeys = Object.keys(cfWorkers.env ?? {});
+    } catch (e) {
+      cfImportError = (e as Error)?.message ?? String(e);
     }
     const apiKey = process.env.GEMINI_API_KEY || cfApiKey;
-    if (!apiKey) throw new Error("GEMINI_API_KEY ausente");
+    if (!apiKey) {
+      const peek = (v: unknown) => (typeof v === "string" && v.length > 0 ? `presente (len ${v.length})` : "ausente");
+      const diag = [
+        `process.env.GEMINI_API_KEY=${peek(process.env.GEMINI_API_KEY)}`,
+        `cfWorkers.env.GEMINI_API_KEY=${peek(cfApiKey)}`,
+        `cfWorkers import error=${cfImportError ?? "nenhum"}`,
+        `cfWorkers.env keys=${cfEnvKeys.join(",") || "(vazio)"}`,
+        `process.env keys count=${Object.keys(process.env ?? {}).length}`,
+      ].join(" | ");
+      throw new Error(`GEMINI_API_KEY ausente. DIAG: ${diag}`);
+    }
 
     const schema = {
       type: "OBJECT",
