@@ -61,7 +61,14 @@ export const extractOsFromDocument = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((data: unknown) => Input.parse(data))
   .handler(async ({ data }): Promise<ExtractedOs> => {
-    const apiKey = process.env.GEMINI_API_KEY;
+    let cfApiKey: string | undefined;
+    try {
+      const cfWorkers = (await import("cloudflare:workers")) as { env?: Record<string, string> };
+      cfApiKey = cfWorkers.env?.GEMINI_API_KEY;
+    } catch {
+      // Não estamos rodando no runtime do Cloudflare Workers (ex: dev local) — ignora.
+    }
+    const apiKey = process.env.GEMINI_API_KEY || cfApiKey;
     if (!apiKey) throw new Error("GEMINI_API_KEY ausente");
 
     // Schema no formato aceito pela API nativa do Gemini (subconjunto de OpenAPI 3.0,
