@@ -1,7 +1,7 @@
 import { createFileRoute, Outlet, Link, useNavigate, useRouterState, redirect } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { useSession, useRoles } from "@/hooks/use-auth";
+import { useSession, useRoles, isOnlyAlmoxarifado } from "@/hooks/use-auth";
 import { ROLE_LABEL } from "@/lib/os-utils";
 import {
   Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel,
@@ -35,12 +35,19 @@ const NAV = [
   { to: "/configuracoes", label: "Configurações", icon: Settings },
 ];
 
+// Almoxarifado só acessa a aba Produção + o detalhe de uma O.S. (linkado de lá).
+// Não é lista de O.S., não é Nova O.S., não é Clientes/Configurações/Dashboard.
+function isPathAllowedForAlmoxarifado(pathname: string) {
+  return pathname === "/producao" || /^\/ordens\/[^/]+$/.test(pathname);
+}
+
 function AppLayout() {
   const { user } = useSession();
-  const { data: roles = [] } = useRoles(user?.id);
+  const { data: roles = [], isLoading: rolesLoading } = useRoles(user?.id);
   const [nome, setNome] = useState<string>("");
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const restrictedToAlmoxarifado = isOnlyAlmoxarifado(roles);
 
   useEffect(() => {
     if (!user) return;
@@ -48,6 +55,19 @@ function AppLayout() {
       setNome(data?.nome || user.email || "");
     });
   }, [user]);
+
+  // Redirect guard: se o usuário só tem o role almoxarifado e tentar acessar
+  // uma rota fora do permitido (ex: digitando a URL direto), manda pra /producao.
+  useEffect(() => {
+    if (rolesLoading || !restrictedToAlmoxarifado) return;
+    if (!isPathAllowedForAlmoxarifado(pathname)) {
+      navigate({ to: "/producao", replace: true });
+    }
+  }, [rolesLoading, restrictedToAlmoxarifado, pathname, navigate]);
+
+  const visibleNav = restrictedToAlmoxarifado
+    ? NAV.filter((item) => item.to === "/producao")
+    : NAV;
 
   async function signOut() {
     await supabase.auth.signOut();
@@ -71,7 +91,7 @@ function AppLayout() {
               <SidebarGroupLabel>Operação</SidebarGroupLabel>
               <SidebarGroupContent>
                 <SidebarMenu>
-                  {NAV.map((item) => {
+                  {visibleNav.map((item) => {
                     const active = pathname === item.to || (item.to !== "/dashboard" && pathname.startsWith(item.to));
                     const Icon = item.icon;
                     return (
