@@ -3,6 +3,7 @@ import type { Database } from "@/integrations/supabase/types";
 export type OsStatus = Database["public"]["Enums"]["os_status"];
 export type EtapaTipo = Database["public"]["Enums"]["etapa_tipo"];
 export type AppRole = Database["public"]["Enums"]["app_role"];
+export type MaterialCategoria = Database["public"]["Enums"]["material_categoria"];
 
 export const OS_STATUS_LABEL: Record<OsStatus, string> = {
   aberta: "Aberta",
@@ -48,7 +49,23 @@ export const ROLE_LABEL: Record<AppRole, string> = {
   pcp: "PCP / Planejamento",
   producao: "Produção",
   viewer: "Visualizador",
+  almoxarifado: "Almoxarifado",
 };
+
+export const MATERIAL_CATEGORIA_LABEL: Record<MaterialCategoria, string> = {
+  longos: "Longos",
+  planos: "Planos",
+  fixadores: "Fixadores",
+  acessorios: "Acessórios",
+  consumo: "Consumo",
+};
+
+export const MATERIAL_CATEGORIA_LIST: MaterialCategoria[] = [
+  "longos", "planos", "fixadores", "acessorios", "consumo"
+];
+
+// Etapas que o role 'almoxarifado' pode editar (usado em canEditEtapa, use-auth.ts)
+export const ETAPAS_ALMOXARIFADO: EtapaTipo[] = ["solicitacao_material", "chegada_material"];
 
 export function formatBRL(v: number | null | undefined) {
   if (v == null) return "—";
