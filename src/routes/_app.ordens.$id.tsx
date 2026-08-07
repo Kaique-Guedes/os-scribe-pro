@@ -17,19 +17,32 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import {
   OS_STATUS_LABEL,
   OS_STATUS_LIST,
   OS_STATUS_CLASS,
   ETAPA_LABEL,
   ETAPA_ORDER,
+  MATERIAL_CATEGORIA_LABEL,
+  MATERIAL_CATEGORIA_LIST,
   formatBRL,
   formatDate,
   isAtrasada,
   diffDays,
   type OsStatus,
   type EtapaTipo,
+  type MaterialCategoria,
 } from "@/lib/os-utils";
+import type { TablesUpdate } from "@/integrations/supabase/types";
 import { extractNotaFiscalFromDocument } from "@/lib/nota-fiscal-extract.functions";
+import { extractCotacaoFromDocument, type ExtractedCotacaoItem } from "@/lib/cotacao-extract.functions";
+import { iniciarConferencia, concluirConferencia } from "@/lib/conferencia-material.functions";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
 import {
@@ -47,8 +60,14 @@ import {
   Receipt,
   FileWarning,
   X as XIcon,
+  Plus,
+  Star,
+  Package,
+  Printer,
+  ClipboardCheck,
+  Sparkles,
 } from "lucide-react";
-import { useSession } from "@/hooks/use-auth";
+import { useSession, useRoles, canEditEtapa } from "@/hooks/use-auth";
 
 export const Route = createFileRoute("/_app/ordens/$id")({
   head: () => ({ meta: [{ title: "O.S. — Sartori Group" }] }),
@@ -60,6 +79,7 @@ function OsDetail() {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const { user } = useSession();
+  const { data: roles = [] } = useRoles(user?.id);
 
   const { data: os, isLoading } = useQuery({
     queryKey: ["os", id],
@@ -111,6 +131,29 @@ function OsDetail() {
           .order("created_at", { ascending: false })
       ).data ?? [],
   });
+  const { data: cotacoes } = useQuery({
+    queryKey: ["material-cotacoes", id],
+    queryFn: async () =>
+      (
+        await supabase
+          .from("material_cotacoes")
+          .select("*, material_cotacao_itens(*)")
+          .eq("os_id", id)
+          .order("created_at", { ascending: false })
+      ).data ?? [],
+  });
+  const { data: conferencias } = useQuery({
+    queryKey: ["material-conferencias", id],
+    queryFn: async () =>
+      (
+        await supabase
+          .from("material_conferencias")
+          .select("*, material_conferencia_itens(*)")
+          .eq("os_id", id)
+      ).data ?? [],
+  });
+  const iniciarConferenciaFn = useServerFn(iniciarConferencia);
+  const concluirConferenciaFn = useServerFn(concluirConferencia);
   const { data: historico } = useQuery({
     queryKey: ["os-historico", id],
     queryFn: async () => {
@@ -134,6 +177,8 @@ function OsDetail() {
   });
 
   const fileRef = useRef<HTMLInputElement>(null);
+  const pedidoCompraFileRef = useRef<HTMLInputElement>(null);
+  const notaFiscalCompraFileRef = useRef<HTMLInputElement>(null);
   const uploadAnexo = useMutation({
     mutationFn: async (file: File) => {
       if (!user) throw new Error("Sem sessão");
@@ -361,6 +406,349 @@ function OsDetail() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["os-etapas", id] }),
     onError: (e: Error) => toast.error(e.message),
   });
+
+  // Campos extras da etapa (data_pedido, anexos de compra) — usados por solicitacao_material/chegada_material
+  const updateEtapaExtra = useMutation({
+    mutationFn: async ({ tipo, patch }: { tipo: EtapaTipo; patch: TablesUpdate<"os_etapas"> }) => {
+      const { error } = await supabase.from("os_etapas").update(patch).eq("os_id", id).eq("tipo", tipo);
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["os-etapas", id] }),
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  // Upload de anexo já vinculado direto a uma coluna de os_etapas (pedido de compra / NF de compra)
+  const uploadEtapaAnexo = useMutation({
+    mutationFn: async ({
+      file,
+      tipo,
+      column,
+    }: {
+      file: File;
+      tipo: EtapaTipo;
+      column: "pedido_compra_anexo_id" | "nota_fiscal_compra_anexo_id";
+    }) => {
+      if (!user) throw new Error("Sem sessão");
+      const path = `${id}/${Date.now()}-${file.name.replace(/[^\w.-]/g, "_")}`;
+      const { error: upErr } = await supabase.storage
+        .from("os-files")
+        .upload(path, file, { contentType: file.type });
+      if (upErr) throw upErr;
+      const { data: anexo, error: insErr } = await supabase
+        .from("os_anexos")
+        .insert({
+          os_id: id,
+          storage_path: path,
+          nome: file.name,
+          mime_type: file.type,
+          tamanho: file.size,
+          uploaded_by: user.id,
+        })
+        .select()
+        .single();
+      if (insErr) throw insErr;
+      const { error: updErr } = await supabase
+        .from("os_etapas")
+        .update({ [column]: anexo.id } as TablesUpdate<"os_etapas">)
+        .eq("os_id", id)
+        .eq("tipo", tipo);
+      if (updErr) throw updErr;
+    },
+    onSuccess: () => {
+      toast.success("Anexo vinculado.");
+      qc.invalidateQueries({ queryKey: ["os-etapas", id] });
+      qc.invalidateQueries({ queryKey: ["os-anexos", id] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  // Cotações de material (várias por categoria, comparação de fornecedores)
+  const [showCotacaoDialog, setShowCotacaoDialog] = useState(false);
+  const cotacaoFileRef = useRef<HTMLInputElement>(null);
+  const [extraindoCotacao, setExtraindoCotacao] = useState(false);
+  const extractCotacaoFn = useServerFn(extractCotacaoFromDocument);
+  const [cotacaoForm, setCotacaoForm] = useState<{
+    categoria: MaterialCategoria;
+    fornecedor: string;
+    valor: string;
+    prazo_entrega_dias: string;
+    observacoes: string;
+    file: File | null;
+    itens: ExtractedCotacaoItem[];
+  }>({
+    categoria: "longos",
+    fornecedor: "",
+    valor: "",
+    prazo_entrega_dias: "",
+    observacoes: "",
+    file: null,
+    itens: [],
+  });
+
+  async function onSelecionarPdfCotacao(file: File) {
+    if (file.size > 15 * 1024 * 1024) {
+      toast.error("Arquivo grande demais (máx 15MB)");
+      return;
+    }
+    setCotacaoForm((f) => ({ ...f, file }));
+    setExtraindoCotacao(true);
+    try {
+      const buf = await file.arrayBuffer();
+      let binary = "";
+      const bytes = new Uint8Array(buf);
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      const dataBase64 = btoa(binary);
+      const r = await extractCotacaoFn({
+        data: { filename: file.name, mimeType: file.type || "application/pdf", dataBase64 },
+      });
+      if (r.itens.length === 0) {
+        toast.warning("A IA não conseguiu identificar itens nesse PDF. Preencha manualmente.");
+      } else {
+        setCotacaoForm((f) => ({
+          ...f,
+          itens: r.itens,
+          valor: r.valor_liquido != null ? String(r.valor_liquido) : f.valor,
+        }));
+        toast.success(`${r.itens.length} item(ns) extraído(s) pela IA! Revise antes de salvar.`);
+      }
+    } catch (e) {
+      toast.error(`Falha na leitura por IA: ${(e as Error).message}. Preencha os itens manualmente.`);
+    } finally {
+      setExtraindoCotacao(false);
+    }
+  }
+
+  function atualizarItemCotacao(idx: number, patch: Partial<ExtractedCotacaoItem>) {
+    setCotacaoForm((f) => ({
+      ...f,
+      itens: f.itens.map((it, i) => (i === idx ? { ...it, ...patch } : it)),
+    }));
+  }
+  function removerItemCotacao(idx: number) {
+    setCotacaoForm((f) => ({ ...f, itens: f.itens.filter((_, i) => i !== idx) }));
+  }
+  function adicionarItemCotacaoVazio() {
+    setCotacaoForm((f) => ({
+      ...f,
+      itens: [...f.itens, { codigo: null, descricao: "", unidade: null, quantidade: 1 }],
+    }));
+  }
+
+  const addCotacao = useMutation({
+    mutationFn: async () => {
+      if (!user) throw new Error("Sem sessão");
+      if (!cotacaoForm.fornecedor.trim() || !cotacaoForm.valor) {
+        throw new Error("Preencha fornecedor e valor.");
+      }
+      let anexo_id: string | null = null;
+      if (cotacaoForm.file) {
+        const path = `${id}/cotacoes/${Date.now()}-${cotacaoForm.file.name.replace(/[^\w.-]/g, "_")}`;
+        const { error: upErr } = await supabase.storage
+          .from("os-files")
+          .upload(path, cotacaoForm.file, { contentType: cotacaoForm.file.type });
+        if (upErr) throw upErr;
+        const { data: anexo, error: insErr } = await supabase
+          .from("os_anexos")
+          .insert({
+            os_id: id,
+            storage_path: path,
+            nome: cotacaoForm.file.name,
+            mime_type: cotacaoForm.file.type,
+            tamanho: cotacaoForm.file.size,
+            uploaded_by: user.id,
+          })
+          .select()
+          .single();
+        if (insErr) throw insErr;
+        anexo_id = anexo.id;
+      }
+      const { data: cotacao, error } = await supabase
+        .from("material_cotacoes")
+        .insert({
+          os_id: id,
+          categoria: cotacaoForm.categoria,
+          fornecedor: cotacaoForm.fornecedor.trim(),
+          valor: Number(cotacaoForm.valor),
+          prazo_entrega_dias: cotacaoForm.prazo_entrega_dias ? Number(cotacaoForm.prazo_entrega_dias) : null,
+          anexo_id,
+          observacoes: cotacaoForm.observacoes.trim() || null,
+          created_by: user.id,
+        })
+        .select()
+        .single();
+      if (error) throw error;
+
+      const itensValidos = cotacaoForm.itens.filter((it) => it.descricao.trim() && it.quantidade > 0);
+      if (itensValidos.length > 0) {
+        const { error: itensErr } = await supabase.from("material_cotacao_itens").insert(
+          itensValidos.map((it) => ({
+            cotacao_id: cotacao.id,
+            descricao: it.descricao.trim(),
+            quantidade: it.quantidade,
+            unidade: it.unidade,
+          })),
+        );
+        if (itensErr) throw itensErr;
+      }
+    },
+    onSuccess: () => {
+      toast.success("Cotação adicionada.");
+      setShowCotacaoDialog(false);
+      setCotacaoForm({
+        categoria: "longos",
+        fornecedor: "",
+        valor: "",
+        prazo_entrega_dias: "",
+        observacoes: "",
+        file: null,
+        itens: [],
+      });
+      if (cotacaoFileRef.current) cotacaoFileRef.current.value = "";
+      qc.invalidateQueries({ queryKey: ["material-cotacoes", id] });
+      qc.invalidateQueries({ queryKey: ["os-anexos", id] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const removeCotacao = useMutation({
+    mutationFn: async (cotacaoId: string) => {
+      const { error } = await supabase.from("material_cotacoes").delete().eq("id", cotacaoId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success("Cotação removida.");
+      qc.invalidateQueries({ queryKey: ["material-cotacoes", id] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const toggleSelecionadaCotacao = useMutation({
+    mutationFn: async ({ cotacaoId, selecionada }: { cotacaoId: string; selecionada: boolean }) => {
+      const { error } = await supabase.from("material_cotacoes").update({ selecionada }).eq("id", cotacaoId);
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["material-cotacoes", id] }),
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  // Conferência física de material (checklist na chegada)
+  const [showConferenciaDialog, setShowConferenciaDialog] = useState(false);
+  const [conferenciaAtualId, setConferenciaAtualId] = useState<string | null>(null);
+  const [checklistItens, setChecklistItens] = useState<
+    { id: string; descricao: string; unidade: string | null; quantidade_esperada: number; veio_certo: boolean; quantidade_recebida: string; observacao: string }[]
+  >([]);
+  const [observacoesGeraisConferencia, setObservacoesGeraisConferencia] = useState("");
+
+  const iniciarConferenciaMutation = useMutation({
+    mutationFn: async (cotacaoId: string) => iniciarConferenciaFn({ data: { cotacaoId } }),
+    onSuccess: (conf) => {
+      qc.invalidateQueries({ queryKey: ["material-conferencias", id] });
+      setConferenciaAtualId(conf.id);
+      setObservacoesGeraisConferencia("");
+      setChecklistItens(
+        (conf.material_conferencia_itens ?? []).map((it) => ({
+          id: it.id,
+          descricao: it.descricao,
+          unidade: it.unidade,
+          quantidade_esperada: it.quantidade_esperada,
+          veio_certo: true,
+          quantidade_recebida: String(it.quantidade_esperada),
+          observacao: "",
+        })),
+      );
+      setShowConferenciaDialog(true);
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  function abrirConferenciaExistente(conf: NonNullable<typeof conferencias>[number]) {
+    setConferenciaAtualId(conf.id);
+    setObservacoesGeraisConferencia(conf.observacoes ?? "");
+    setChecklistItens(
+      (conf.material_conferencia_itens ?? []).map((it) => ({
+        id: it.id,
+        descricao: it.descricao,
+        unidade: it.unidade,
+        quantidade_esperada: it.quantidade_esperada,
+        veio_certo: it.veio_certo ?? true,
+        quantidade_recebida: String(it.quantidade_recebida ?? it.quantidade_esperada),
+        observacao: it.observacao ?? "",
+      })),
+    );
+    setShowConferenciaDialog(true);
+  }
+
+  const concluirConferenciaMutation = useMutation({
+    mutationFn: async () => {
+      if (!conferenciaAtualId) throw new Error("Nenhuma conferência aberta");
+      return concluirConferenciaFn({
+        data: {
+          conferenciaId: conferenciaAtualId,
+          itens: checklistItens.map((it) => ({
+            id: it.id,
+            veio_certo: it.veio_certo,
+            quantidade_recebida: it.quantidade_recebida ? Number(it.quantidade_recebida) : null,
+            observacao: it.veio_certo ? null : it.observacao || null,
+          })),
+          observacoesGerais: observacoesGeraisConferencia || null,
+        },
+      });
+    },
+    onSuccess: () => {
+      toast.success("Conferência concluída. E-mail enviado pra admin/PCP.");
+      setShowConferenciaDialog(false);
+      setConferenciaAtualId(null);
+      qc.invalidateQueries({ queryKey: ["material-conferencias", id] });
+      qc.invalidateQueries({ queryKey: ["os-etapas", id] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  function imprimirChecklist(cotacao: { fornecedor: string; categoria: MaterialCategoria }) {
+    const win = window.open("", "_blank");
+    if (!win) {
+      toast.error("O navegador bloqueou a janela de impressão.");
+      return;
+    }
+    const linhas = checklistItens
+      .map(
+        (it) => `
+        <tr>
+          <td style="border:1px solid #999;padding:6px 8px;">${it.descricao}</td>
+          <td style="border:1px solid #999;padding:6px 8px;text-align:center;">${it.quantidade_esperada}${it.unidade ? " " + it.unidade : ""}</td>
+          <td style="border:1px solid #999;padding:6px 8px;text-align:center;width:60px;"><div style="width:22px;height:22px;border:2px solid #333;margin:0 auto;"></div></td>
+        </tr>`,
+      )
+      .join("");
+    win.document.write(`
+      <html>
+        <head>
+          <title>Checklist de conferência</title>
+          <style>
+            body { font-family: Arial, sans-serif; padding: 24px; }
+            h1 { font-size: 18px; margin-bottom: 4px; }
+            p { margin: 2px 0; font-size: 13px; color: #333; }
+            table { border-collapse: collapse; width: 100%; margin-top: 16px; }
+            th { border: 1px solid #999; padding: 6px 8px; background: #eee; text-align: left; font-size: 13px; }
+          </style>
+        </head>
+        <body>
+          <h1>Checklist de conferência de material — O.S. ${os?.numero_os ?? ""}</h1>
+          <p><b>Categoria:</b> ${MATERIAL_CATEGORIA_LABEL[cotacao.categoria]}</p>
+          <p><b>Fornecedor:</b> ${cotacao.fornecedor}</p>
+          <p><b>Data:</b> ${new Date().toLocaleDateString("pt-BR")}</p>
+          <table>
+            <thead><tr><th>Item</th><th>Qtd. pedida</th><th>Veio certo?</th></tr></thead>
+            <tbody>${linhas}</tbody>
+          </table>
+          <p style="margin-top:24px;">Conferido por: _______________________________</p>
+        </body>
+      </html>
+    `);
+    win.document.close();
+    win.focus();
+    win.print();
+  }
 
   const [novoComentario, setNovoComentario] = useState("");
   const addComentario = useMutation({
@@ -673,18 +1061,31 @@ function OsDetail() {
               {ETAPA_ORDER.map((tipo) => {
                 const e = etapas?.find((x) => x.tipo === tipo);
                 const done = e?.status === "concluido";
+                const editavel = canEditEtapa(roles, tipo);
+                const pedidoCompraAnexo = anexos?.find((a) => a.id === e?.pedido_compra_anexo_id);
+                const notaFiscalCompraAnexo = anexos?.find((a) => a.id === e?.nota_fiscal_compra_anexo_id);
+                const cotacoesDaOs = cotacoes ?? [];
+
                 return (
                   <div key={tipo} className="flex items-start gap-3">
                     <button
                       onClick={() =>
+                        editavel &&
                         updateEtapa.mutate({
                           tipo,
                           data: e?.data ?? new Date().toISOString().slice(0, 10),
                           status: done ? "pendente" : "concluido",
                         })
                       }
-                      className="mt-0.5"
-                      title={done ? "Marcar como pendente" : "Marcar como concluído"}
+                      disabled={!editavel}
+                      className="mt-0.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                      title={
+                        !editavel
+                          ? "Seu perfil não pode editar esta etapa"
+                          : done
+                          ? "Marcar como pendente"
+                          : "Marcar como concluído"
+                      }
                     >
                       {done ? (
                         <CheckCircle2 className="h-5 w-5 text-success" />
@@ -692,12 +1093,13 @@ function OsDetail() {
                         <Circle className="h-5 w-5 text-muted-foreground" />
                       )}
                     </button>
-                    <div className="flex-1 min-w-0">
+                    <div className="flex-1 min-w-0 space-y-2">
                       <div className="text-sm font-medium">{ETAPA_LABEL[tipo]}</div>
                       <Input
                         type="date"
                         className="h-8 mt-1"
                         value={e?.data ?? ""}
+                        disabled={!editavel}
                         onChange={(ev) =>
                           updateEtapa.mutate({
                             tipo,
@@ -706,6 +1108,234 @@ function OsDetail() {
                           })
                         }
                       />
+
+                      {/* Campos extras — só na etapa de solicitação de material (almoxarifado) */}
+                      {tipo === "solicitacao_material" && (
+                        <div className="space-y-2 pt-1">
+                          <div>
+                            <Label className="text-xs text-muted-foreground">Data do pedido de material</Label>
+                            <Input
+                              type="date"
+                              className="h-8 mt-1"
+                              value={e?.data_pedido ?? ""}
+                              disabled={!editavel}
+                              onChange={(ev) =>
+                                updateEtapaExtra.mutate({
+                                  tipo,
+                                  patch: { data_pedido: ev.target.value || null },
+                                })
+                              }
+                            />
+                          </div>
+
+                          <div className="rounded-md border p-2 space-y-2">
+                            <div className="flex items-center justify-between">
+                              <div className="text-xs font-medium flex items-center gap-1">
+                                <Package className="h-3.5 w-3.5" /> Cotações de material
+                              </div>
+                              {editavel && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 px-2"
+                                  onClick={() => setShowCotacaoDialog(true)}
+                                >
+                                  <Plus className="h-3.5 w-3.5 mr-1" /> Cotação
+                                </Button>
+                              )}
+                            </div>
+                            {cotacoesDaOs.length === 0 ? (
+                              <div className="text-xs text-muted-foreground">Nenhuma cotação ainda.</div>
+                            ) : (
+                              MATERIAL_CATEGORIA_LIST.filter((cat) =>
+                                cotacoesDaOs.some((c) => c.categoria === cat),
+                              ).map((cat) => (
+                                <div key={cat} className="space-y-1">
+                                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                                    {MATERIAL_CATEGORIA_LABEL[cat]}
+                                  </div>
+                                  {cotacoesDaOs
+                                    .filter((c) => c.categoria === cat)
+                                    .map((c) => (
+                                      <div
+                                        key={c.id}
+                                        className="flex items-center justify-between gap-2 text-xs rounded border px-2 py-1"
+                                      >
+                                        <button
+                                          disabled={!editavel}
+                                          onClick={() =>
+                                            toggleSelecionadaCotacao.mutate({
+                                              cotacaoId: c.id,
+                                              selecionada: !c.selecionada,
+                                            })
+                                          }
+                                          title={c.selecionada ? "Selecionada" : "Marcar como selecionada"}
+                                          className="disabled:opacity-40"
+                                        >
+                                          <Star
+                                            className={`h-3.5 w-3.5 ${c.selecionada ? "fill-warning text-warning" : "text-muted-foreground"}`}
+                                          />
+                                        </button>
+                                        <div className="flex-1 min-w-0">
+                                          <div className="font-medium truncate">{c.fornecedor}</div>
+                                          <div className="text-muted-foreground">
+                                            {formatBRL(c.valor)}
+                                            {c.prazo_entrega_dias != null && ` · ${c.prazo_entrega_dias}d`}
+                                          </div>
+                                        </div>
+                                        {editavel && (
+                                          <button onClick={() => removeCotacao.mutate(c.id)} title="Remover cotação">
+                                            <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                                          </button>
+                                        )}
+                                      </div>
+                                    ))}
+                                </div>
+                              ))
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Campos extras — só na etapa de chegada de material (almoxarifado) */}
+                      {tipo === "chegada_material" && (
+                        <div className="space-y-2 pt-1">
+                          <div className="flex items-center justify-between rounded-md border px-2 py-1.5 text-xs">
+                            <span className="flex items-center gap-1 truncate">
+                              <Paperclip className="h-3.5 w-3.5" />
+                              {pedidoCompraAnexo ? pedidoCompraAnexo.nome : "Pedido de compra — sem anexo"}
+                            </span>
+                            {editavel && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-6 px-2"
+                                onClick={() => pedidoCompraFileRef.current?.click()}
+                              >
+                                <Upload className="h-3.5 w-3.5" />
+                              </Button>
+                            )}
+                            <input
+                              ref={pedidoCompraFileRef}
+                              type="file"
+                              className="hidden"
+                              onChange={(ev) => {
+                                const f = ev.target.files?.[0];
+                                if (f) uploadEtapaAnexo.mutate({ file: f, tipo, column: "pedido_compra_anexo_id" });
+                                ev.target.value = "";
+                              }}
+                            />
+                          </div>
+                          <div className="flex items-center justify-between rounded-md border px-2 py-1.5 text-xs">
+                            <span className="flex items-center gap-1 truncate">
+                              <Receipt className="h-3.5 w-3.5" />
+                              {notaFiscalCompraAnexo ? notaFiscalCompraAnexo.nome : "Nota fiscal de compra — sem anexo"}
+                            </span>
+                            {editavel && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-6 px-2"
+                                onClick={() => notaFiscalCompraFileRef.current?.click()}
+                              >
+                                <Upload className="h-3.5 w-3.5" />
+                              </Button>
+                            )}
+                            <input
+                              ref={notaFiscalCompraFileRef}
+                              type="file"
+                              className="hidden"
+                              onChange={(ev) => {
+                                const f = ev.target.files?.[0];
+                                if (f)
+                                  uploadEtapaAnexo.mutate({ file: f, tipo, column: "nota_fiscal_compra_anexo_id" });
+                                ev.target.value = "";
+                              }}
+                            />
+                          </div>
+
+                          <div className="rounded-md border p-2 space-y-2">
+                            <div className="text-xs font-medium flex items-center gap-1">
+                              <ClipboardCheck className="h-3.5 w-3.5" /> Conferência física de material
+                            </div>
+                            {cotacoesDaOs.filter((c) => c.selecionada).length === 0 ? (
+                              <div className="text-xs text-muted-foreground">
+                                Nenhuma cotação fechada ainda — marque uma cotação como selecionada na etapa
+                                de solicitação de material pra liberar a conferência.
+                              </div>
+                            ) : (
+                              cotacoesDaOs
+                                .filter((c) => c.selecionada)
+                                .map((c) => {
+                                  const conf = conferencias?.find((cf) => cf.cotacao_id === c.id);
+                                  return (
+                                    <div
+                                      key={c.id}
+                                      className="flex items-center justify-between gap-2 text-xs rounded border px-2 py-1.5"
+                                    >
+                                      <div className="min-w-0">
+                                        <div className="font-medium truncate">
+                                          {MATERIAL_CATEGORIA_LABEL[c.categoria]} · {c.fornecedor}
+                                        </div>
+                                        {conf?.status === "concluida" && (
+                                          <div
+                                            className={`flex items-center gap-1 mt-0.5 ${conf.resultado === "ok" ? "text-success" : "text-destructive"}`}
+                                          >
+                                            {conf.resultado === "ok" ? (
+                                              <CheckCircle2 className="h-3 w-3" />
+                                            ) : (
+                                              <AlertTriangle className="h-3 w-3" />
+                                            )}
+                                            {conf.resultado === "ok" ? "Conferido — tudo certo" : "Conferido — divergência"}
+                                          </div>
+                                        )}
+                                        {conf?.status === "em_andamento" && (
+                                          <div className="text-muted-foreground mt-0.5">Conferência em andamento</div>
+                                        )}
+                                      </div>
+                                      {editavel && (
+                                        <div className="flex items-center gap-1 shrink-0">
+                                          {!conf && (
+                                            <Button
+                                              size="sm"
+                                              variant="outline"
+                                              className="h-7 px-2"
+                                              onClick={() => iniciarConferenciaMutation.mutate(c.id)}
+                                              disabled={iniciarConferenciaMutation.isPending}
+                                            >
+                                              Iniciar conferência
+                                            </Button>
+                                          )}
+                                          {conf?.status === "em_andamento" && (
+                                            <>
+                                              <Button
+                                                size="sm"
+                                                variant="ghost"
+                                                className="h-7 px-2"
+                                                onClick={() => imprimirChecklist(c)}
+                                                title="Imprimir checklist"
+                                              >
+                                                <Printer className="h-3.5 w-3.5" />
+                                              </Button>
+                                              <Button
+                                                size="sm"
+                                                variant="outline"
+                                                className="h-7 px-2"
+                                                onClick={() => abrirConferenciaExistente(conf)}
+                                              >
+                                                Continuar
+                                              </Button>
+                                            </>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })
+                            )}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
@@ -1046,6 +1676,243 @@ function OsDetail() {
           </Card>
         </div>
       </div>
+
+      <Dialog open={showCotacaoDialog} onOpenChange={setShowCotacaoDialog}>
+        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Nova cotação de material</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="rounded-md border border-dashed p-3 text-center space-y-2">
+              <p className="text-xs text-muted-foreground">
+                Anexe o PDF do pedido de cotação (modelo padrão) e a IA lista os itens automaticamente.
+              </p>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                onClick={() => cotacaoFileRef.current?.click()}
+                disabled={extraindoCotacao}
+              >
+                <Sparkles className="h-3.5 w-3.5 mr-1" />
+                {extraindoCotacao ? "Lendo PDF..." : cotacaoForm.file ? "Trocar PDF" : "Anexar PDF e extrair itens"}
+              </Button>
+              {cotacaoForm.file && (
+                <p className="text-xs text-muted-foreground truncate">{cotacaoForm.file.name}</p>
+              )}
+              <input
+                ref={cotacaoFileRef}
+                type="file"
+                accept="application/pdf,image/*"
+                className="hidden"
+                onChange={(ev) => {
+                  const f = ev.target.files?.[0];
+                  if (f) onSelecionarPdfCotacao(f);
+                }}
+              />
+            </div>
+
+            <div>
+              <Label>Categoria</Label>
+              <Select
+                value={cotacaoForm.categoria}
+                onValueChange={(v) => setCotacaoForm((f) => ({ ...f, categoria: v as MaterialCategoria }))}
+              >
+                <SelectTrigger className="mt-1">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {MATERIAL_CATEGORIA_LIST.map((cat) => (
+                    <SelectItem key={cat} value={cat}>
+                      {MATERIAL_CATEGORIA_LABEL[cat]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Fornecedor</Label>
+              <Input
+                className="mt-1"
+                value={cotacaoForm.fornecedor}
+                onChange={(ev) => setCotacaoForm((f) => ({ ...f, fornecedor: ev.target.value }))}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>Valor (R$)</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  className="mt-1"
+                  value={cotacaoForm.valor}
+                  onChange={(ev) => setCotacaoForm((f) => ({ ...f, valor: ev.target.value }))}
+                />
+              </div>
+              <div>
+                <Label>Prazo de entrega (dias)</Label>
+                <Input
+                  type="number"
+                  className="mt-1"
+                  value={cotacaoForm.prazo_entrega_dias}
+                  onChange={(ev) => setCotacaoForm((f) => ({ ...f, prazo_entrega_dias: ev.target.value }))}
+                />
+              </div>
+            </div>
+            <div>
+              <Label>Observações</Label>
+              <Textarea
+                rows={2}
+                className="mt-1"
+                value={cotacaoForm.observacoes}
+                onChange={(ev) => setCotacaoForm((f) => ({ ...f, observacoes: ev.target.value }))}
+              />
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <Label>Itens</Label>
+                <Button type="button" size="sm" variant="ghost" className="h-6 px-2" onClick={adicionarItemCotacaoVazio}>
+                  <Plus className="h-3.5 w-3.5 mr-1" /> item
+                </Button>
+              </div>
+              {cotacaoForm.itens.length === 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  Nenhum item ainda. Anexe o PDF acima ou adicione manualmente.
+                </p>
+              ) : (
+                <div className="space-y-1.5">
+                  {cotacaoForm.itens.map((it, idx) => (
+                    <div key={idx} className="flex items-center gap-1.5">
+                      <Input
+                        className="h-8 flex-1"
+                        placeholder="Descrição"
+                        value={it.descricao}
+                        onChange={(ev) => atualizarItemCotacao(idx, { descricao: ev.target.value })}
+                      />
+                      <Input
+                        className="h-8 w-20"
+                        type="number"
+                        placeholder="Qtd"
+                        value={it.quantidade}
+                        onChange={(ev) => atualizarItemCotacao(idx, { quantidade: Number(ev.target.value) })}
+                      />
+                      <Input
+                        className="h-8 w-16"
+                        placeholder="Un"
+                        value={it.unidade ?? ""}
+                        onChange={(ev) => atualizarItemCotacao(idx, { unidade: ev.target.value || null })}
+                      />
+                      <button onClick={() => removerItemCotacao(idx)} title="Remover item">
+                        <XIcon className="h-3.5 w-3.5 text-destructive" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setShowCotacaoDialog(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={() => addCotacao.mutate()} disabled={addCotacao.isPending}>
+              {addCotacao.isPending ? "Salvando..." : "Salvar cotação"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showConferenciaDialog} onOpenChange={setShowConferenciaDialog}>
+        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Conferência de material</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2">
+            {checklistItens.map((it, idx) => (
+              <div key={it.id} className="rounded-md border p-2 space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-sm min-w-0">
+                    <div className="font-medium truncate">{it.descricao}</div>
+                    <div className="text-xs text-muted-foreground">
+                      Pedido: {it.quantidade_esperada}
+                      {it.unidade ? ` ${it.unidade}` : ""}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <Button
+                      size="sm"
+                      variant={it.veio_certo ? "default" : "outline"}
+                      className="h-7 px-2"
+                      onClick={() =>
+                        setChecklistItens((arr) =>
+                          arr.map((x, i) => (i === idx ? { ...x, veio_certo: true } : x)),
+                        )
+                      }
+                    >
+                      Certo
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant={!it.veio_certo ? "destructive" : "outline"}
+                      className="h-7 px-2"
+                      onClick={() =>
+                        setChecklistItens((arr) =>
+                          arr.map((x, i) => (i === idx ? { ...x, veio_certo: false } : x)),
+                        )
+                      }
+                    >
+                      Errado
+                    </Button>
+                  </div>
+                </div>
+                {!it.veio_certo && (
+                  <div className="grid grid-cols-2 gap-2">
+                    <Input
+                      className="h-8"
+                      type="number"
+                      placeholder="Qtd. recebida"
+                      value={it.quantidade_recebida}
+                      onChange={(ev) =>
+                        setChecklistItens((arr) =>
+                          arr.map((x, i) => (i === idx ? { ...x, quantidade_recebida: ev.target.value } : x)),
+                        )
+                      }
+                    />
+                    <Input
+                      className="h-8"
+                      placeholder="O que veio errado?"
+                      value={it.observacao}
+                      onChange={(ev) =>
+                        setChecklistItens((arr) =>
+                          arr.map((x, i) => (i === idx ? { ...x, observacao: ev.target.value } : x)),
+                        )
+                      }
+                    />
+                  </div>
+                )}
+              </div>
+            ))}
+            <div>
+              <Label>Observações gerais</Label>
+              <Textarea
+                rows={2}
+                className="mt-1"
+                value={observacoesGeraisConferencia}
+                onChange={(ev) => setObservacoesGeraisConferencia(ev.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setShowConferenciaDialog(false)}>
+              Fechar
+            </Button>
+            <Button onClick={() => concluirConferenciaMutation.mutate()} disabled={concluirConferenciaMutation.isPending}>
+              {concluirConferenciaMutation.isPending ? "Salvando..." : "Concluir conferência"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
