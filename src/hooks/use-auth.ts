@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import type { Session } from "@supabase/supabase-js";
-import type { AppRole } from "@/lib/os-utils";
+import type { AppRole, EtapaTipo } from "@/lib/os-utils";
+import { ETAPAS_ALMOXARIFADO } from "@/lib/os-utils";
 
 export function useSession() {
   const [session, setSession] = useState<Session | null>(null);
@@ -41,4 +42,19 @@ export function canUpdateStages(roles: AppRole[]) {
 }
 export function isAdmin(roles: AppRole[]) {
   return roles.includes("admin");
+}
+
+// Regra de edição por etapa: admin/pcp/producao editam qualquer etapa;
+// almoxarifado só edita solicitacao_material e chegada_material.
+// Espelha a policy "etapas write" do banco (RLS) — aqui é só pra UI (esconder/desabilitar campos).
+// A RLS continua sendo a fonte de verdade real, isso aqui é só experiência de usuário.
+export function canEditEtapa(roles: AppRole[], tipo: EtapaTipo) {
+  if (canUpdateStages(roles)) return true;
+  if (roles.includes("almoxarifado")) return ETAPAS_ALMOXARIFADO.includes(tipo);
+  return false;
+}
+
+// true se o usuário só tem o role almoxarifado (nenhum outro) — usado pra restringir a navegação
+export function isOnlyAlmoxarifado(roles: AppRole[]) {
+  return roles.length > 0 && roles.every((r) => r === "almoxarifado");
 }
