@@ -23,7 +23,7 @@ export const Route = createFileRoute("/_app/configuracoes")({
   component: ConfigPage,
 });
 
-const ALL_ROLES: AppRole[] = ["admin","pcp","producao","viewer"];
+const ALL_ROLES: AppRole[] = ["admin","pcp","producao","viewer","almoxarifado"];
 
 function ConfigPage() {
   const qc = useQueryClient();
