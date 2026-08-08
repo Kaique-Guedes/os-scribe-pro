@@ -29,6 +29,7 @@ import {
   OS_STATUS_CLASS,
   ETAPA_LABEL,
   ETAPA_ORDER,
+  ETAPAS_ALMOXARIFADO,
   MATERIAL_CATEGORIA_LABEL,
   MATERIAL_CATEGORIA_LIST,
   formatBRL,
@@ -67,7 +68,7 @@ import {
   ClipboardCheck,
   Sparkles,
 } from "lucide-react";
-import { useSession, useRoles, canEditEtapa } from "@/hooks/use-auth";
+import { useSession, useRoles, canEditEtapa, isOnlyAlmoxarifado } from "@/hooks/use-auth";
 
 export const Route = createFileRoute("/_app/ordens/$id")({
   head: () => ({ meta: [{ title: "O.S. — Sartori Group" }] }),
@@ -80,6 +81,8 @@ function OsDetail() {
   const qc = useQueryClient();
   const { user } = useSession();
   const { data: roles = [] } = useRoles(user?.id);
+  // Almoxarifado só vê o que é dele: sem valores, sem dados de contrato, sem outras etapas.
+  const restrito = isOnlyAlmoxarifado(roles);
 
   const { data: os, isLoading } = useQuery({
     queryKey: ["os", id],
@@ -825,13 +828,15 @@ function OsDetail() {
           </div>
         </div>
         <div className="flex gap-2">
-          <Button
-            variant="destructive"
-            size="sm"
-            onClick={() => confirm("Excluir esta O.S.?") && removeOs.mutate()}
-          >
-            Excluir
-          </Button>
+          {!restrito && (
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => confirm("Excluir esta O.S.?") && removeOs.mutate()}
+            >
+              Excluir
+            </Button>
+          )}
           {Object.keys(edit).length > 0 && (
             <Button onClick={() => save.mutate()} disabled={save.isPending}>
               <Save className="h-4 w-4 mr-2" />
@@ -842,27 +847,30 @@ function OsDetail() {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-3">
-        <SummaryCard label="Valor total" value={formatBRL(Number(os.valor_total))} />
+        {!restrito && <SummaryCard label="Valor total" value={formatBRL(Number(os.valor_total))} />}
         <SummaryCard
           label="Entrega prevista"
           value={formatDate(os.data_entrega_prev)}
           tone={atrasada ? "danger" : undefined}
         />
-        <SummaryCard
-          label={os.data_entrega_real ? "Entregue em" : "Prazo (dias)"}
-          value={
-            os.data_entrega_real
-              ? formatDate(os.data_entrega_real)
-              : dias == null
-                ? "—"
-                : `${dias > 0 ? "+" : ""}${dias} dias`
-          }
-          tone={dias != null && dias > 0 && !os.data_entrega_real ? "danger" : "success"}
-        />
+        {!restrito && (
+          <SummaryCard
+            label={os.data_entrega_real ? "Entregue em" : "Prazo (dias)"}
+            value={
+              os.data_entrega_real
+                ? formatDate(os.data_entrega_real)
+                : dias == null
+                  ? "—"
+                  : `${dias > 0 ? "+" : ""}${dias} dias`
+            }
+            tone={dias != null && dias > 0 && !os.data_entrega_real ? "danger" : "success"}
+          />
+        )}
       </div>
 
       <div className="grid gap-5 lg:grid-cols-[1fr_320px]">
         <div className="space-y-5">
+          {!restrito && (
           <Card>
             <CardHeader>
               <CardTitle className="text-base">Dados gerais</CardTitle>
@@ -1049,6 +1057,7 @@ function OsDetail() {
               </div>
             </CardContent>
           </Card>
+          )}
         </div>
 
         <div className="space-y-5">
@@ -1058,7 +1067,7 @@ function OsDetail() {
               <CardDescription>Marcos do ciclo de vida da O.S.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              {ETAPA_ORDER.map((tipo) => {
+              {(restrito ? ETAPA_ORDER.filter((t) => ETAPAS_ALMOXARIFADO.includes(t)) : ETAPA_ORDER).map((tipo) => {
                 const e = etapas?.find((x) => x.tipo === tipo);
                 const done = e?.status === "concluido";
                 const editavel = canEditEtapa(roles, tipo);
@@ -1343,6 +1352,7 @@ function OsDetail() {
             </CardContent>
           </Card>
 
+          {!restrito && (
           <Card>
             <CardHeader>
               <CardTitle className="text-base flex items-center gap-2">
@@ -1383,7 +1393,9 @@ function OsDetail() {
               </ul>
             </CardContent>
           </Card>
+          )}
 
+          {!restrito && (
           <Card
             className={notasFiscais && notasFiscais.length > 0 ? "border-success/40" : undefined}
           >
@@ -1557,7 +1569,9 @@ function OsDetail() {
               )}
             </CardContent>
           </Card>
+          )}
 
+          {!restrito && (
           <Card>
             <CardHeader>
               <CardTitle className="text-base flex items-center gap-2">
@@ -1626,7 +1640,9 @@ function OsDetail() {
               </ul>
             </CardContent>
           </Card>
+          )}
 
+          {!restrito && (
           <Card>
             <CardHeader>
               <CardTitle className="text-base flex items-center gap-2">
@@ -1674,6 +1690,7 @@ function OsDetail() {
               </ul>
             </CardContent>
           </Card>
+          )}
         </div>
       </div>
 
