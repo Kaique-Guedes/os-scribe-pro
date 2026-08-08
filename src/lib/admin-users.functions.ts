@@ -5,7 +5,7 @@ import { z } from "zod";
 const Input = z.object({
   email: z.string().email(),
   nome: z.string().trim().optional(),
-  role: z.enum(["admin", "pcp", "producao", "viewer"]).default("viewer"),
+  role: z.enum(["admin", "pcp", "producao", "viewer", "almoxarifado"]).default("viewer"),
   password: z.string().min(8).optional(),
 });
 
