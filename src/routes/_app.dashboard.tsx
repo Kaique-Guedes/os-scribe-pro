@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -121,7 +121,9 @@ function DashboardPage() {
       (await supabase.from("clientes").select("id, nome").order("nome")).data ?? [],
   });
 
-  const allRows = data ?? [];
+  // Evita recriar o array em toda render quando `data` ainda é undefined —
+  // sem isso, os useMemo que dependem de allRows perdem a memoização e recalculam sempre.
+  const allRows = useMemo(() => data ?? [], [data]);
 
   // Progresso de etapas por O.S: quantas das 5 etapas já estão concluídas
   const etapasPorOs = useMemo(() => {
@@ -340,26 +342,25 @@ function DashboardPage() {
 
   // Cada nota fiscal soma seu valor no mês da SUA data de emissão (não da O.S.) —
   // assim o faturamento realizado reflete quando o dinheiro efetivamente entrou.
-  function calcularComparativo(
-    rowsBase: typeof allRows,
-    notasBase: typeof notasFiscaisData,
-    mes: string,
-  ) {
-    const previstasNoMes = rowsBase.filter((r) => r.data_entrega_prev?.slice(0, 7) === mes);
-    const realizadasNoMes = rowsBase.filter((r) => r.data_entrega_real?.slice(0, 7) === mes);
-    const notasNoMes = (notasBase ?? []).filter((n) => n.data_emissao?.slice(0, 7) === mes);
-    const faturamentoPrevisto = previstasNoMes.reduce((s, r) => s + Number(r.valor_total || 0), 0);
-    const faturamentoRealizado = notasNoMes.reduce((s, n) => s + Number(n.valor || 0), 0);
-    return {
-      entregasPrevistas: previstasNoMes.length,
-      entregasRealizadas: realizadasNoMes.length,
-      faturamentoPrevisto,
-      faturamentoRealizado,
-      previstasNoMes,
-      realizadasNoMes,
-      notasNoMes,
-    };
-  }
+  const calcularComparativo = useCallback(
+    (rowsBase: typeof allRows, notasBase: typeof notasFiscaisData, mes: string) => {
+      const previstasNoMes = rowsBase.filter((r) => r.data_entrega_prev?.slice(0, 7) === mes);
+      const realizadasNoMes = rowsBase.filter((r) => r.data_entrega_real?.slice(0, 7) === mes);
+      const notasNoMes = (notasBase ?? []).filter((n) => n.data_emissao?.slice(0, 7) === mes);
+      const faturamentoPrevisto = previstasNoMes.reduce((s, r) => s + Number(r.valor_total || 0), 0);
+      const faturamentoRealizado = notasNoMes.reduce((s, n) => s + Number(n.valor || 0), 0);
+      return {
+        entregasPrevistas: previstasNoMes.length,
+        entregasRealizadas: realizadasNoMes.length,
+        faturamentoPrevisto,
+        faturamentoRealizado,
+        previstasNoMes,
+        realizadasNoMes,
+        notasNoMes,
+      };
+    },
+    [],
+  );
 
   const comparativoMes = calcularComparativo(rowsPorCliente, notasPorCliente, mesReferencia);
   const mesReferenciaLabel = (() => {
@@ -386,7 +387,7 @@ function DashboardPage() {
         "Faturamento realizado": c.faturamentoRealizado,
       };
     });
-  }, [rowsPorCliente, notasPorCliente, mesReferencia]);
+  }, [rowsPorCliente, notasPorCliente, mesReferencia, calcularComparativo]);
 
   // Drill-down: qual lista mostrar em detalhe (clicando nos cards do comparativo)
   const [detalheAberto, setDetalheAberto] = useState<
