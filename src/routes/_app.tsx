@@ -19,9 +19,9 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 
 export const Route = createFileRoute("/_app")({
   ssr: false,
-  beforeLoad: async () => {
+  beforeLoad: async ({ location }) => {
     const { data } = await supabase.auth.getUser();
-    if (!data.user) throw redirect({ to: "/auth" });
+    if (!data.user) throw redirect({ to: "/auth", search: { next: location.pathname } });
   },
   component: AppLayout,
 });
@@ -71,7 +71,7 @@ function AppLayout() {
 
   async function signOut() {
     await supabase.auth.signOut();
-    navigate({ to: "/auth", replace: true });
+    navigate({ to: "/auth", replace: true, search: { next: "" } });
   }
 
   const initials = (nome || user?.email || "?").slice(0, 2).toUpperCase();
