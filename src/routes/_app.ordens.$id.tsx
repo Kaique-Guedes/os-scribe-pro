@@ -868,9 +868,9 @@ function OsDetail() {
         )}
       </div>
 
-      <div className="grid gap-5 lg:grid-cols-[1fr_320px]">
+      <div className={restrito ? "max-w-2xl mx-auto" : "grid gap-5 lg:grid-cols-[1fr_320px]"}>
+        {!restrito && (
         <div className="space-y-5">
-          {!restrito && (
           <Card>
             <CardHeader>
               <CardTitle className="text-base">Dados gerais</CardTitle>
