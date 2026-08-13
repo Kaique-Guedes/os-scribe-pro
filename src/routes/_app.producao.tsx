@@ -3,7 +3,8 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { ETAPA_LABEL, ETAPA_ORDER, OS_STATUS_CLASS, OS_STATUS_LABEL, formatDate, type EtapaTipo, type OsStatus } from "@/lib/os-utils";
+import { ETAPA_LABEL, ETAPA_ORDER, ETAPAS_ALMOXARIFADO, OS_STATUS_CLASS, OS_STATUS_LABEL, formatDate, type EtapaTipo, type OsStatus } from "@/lib/os-utils";
+import { useSession, useRoles, isOnlyAlmoxarifado } from "@/hooks/use-auth";
 
 export const Route = createFileRoute("/_app/producao")({
   head: () => ({ meta: [{ title: "Produção — Sartori Group" }] }),
@@ -11,6 +12,12 @@ export const Route = createFileRoute("/_app/producao")({
 });
 
 function ProducaoPage() {
+  const { user } = useSession();
+  const { data: roles = [] } = useRoles(user?.id);
+  // Almoxarifado só acompanha as 2 etapas que ele mexe — o resto do fluxo
+  // (pintura, entrega) não é da alçada dele, então nem mostramos a coluna.
+  const colunasVisiveis = isOnlyAlmoxarifado(roles) ? ETAPAS_ALMOXARIFADO : ETAPA_ORDER;
+
   const { data } = useQuery({
     queryKey: ["producao-etapas"],
     queryFn: async () => {
@@ -35,8 +42,8 @@ function ProducaoPage() {
         <p className="text-sm text-muted-foreground">Etapas pendentes agrupadas por marco de produção.</p>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-        {ETAPA_ORDER.map(tipo => (
+      <div className={`grid gap-4 md:grid-cols-2 ${colunasVisiveis.length >= 3 ? "xl:grid-cols-5" : ""}`}>
+        {colunasVisiveis.map(tipo => (
           <Card key={tipo} className="flex flex-col">
             <CardHeader className="pb-3">
               <CardTitle className="text-sm">{ETAPA_LABEL[tipo]}</CardTitle>
