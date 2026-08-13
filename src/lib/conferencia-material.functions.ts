@@ -135,6 +135,20 @@ export const concluirConferencia = createServerFn({ method: "POST" })
         .update({ status: "concluido", data: new Date().toISOString().slice(0, 10) })
         .eq("os_id", conferencia.os_id)
         .eq("tipo", "chegada_material");
+
+      // Avança o status da O.S. sozinho quando todo o material já foi conferido.
+      // Guard com .in(): só troca se ainda estiver em "aberta"/"aguardando_material" —
+      // não sobrescreve um status que já avançou manualmente (em_pintura, entregue,
+      // atrasada, cancelada etc.), pra não "voltar" uma O.S. que já passou dessa fase.
+      // Usa o client admin (bypassa RLS) de propósito: quem dispara essa mudança é o
+      // SISTEMA reagindo à conferência concluída, não uma edição livre do usuário —
+      // o almoxarifado não tem (e não deve ter) permissão de UPDATE em ordens_servico.
+      const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+      await supabaseAdmin
+        .from("ordens_servico")
+        .update({ status: "em_producao" })
+        .eq("id", conferencia.os_id)
+        .in("status", ["aberta", "aguardando_material"]);
     }
 
     // E-mail pra admin + pcp (best-effort: se falhar, não derruba a conclusão da conferência)
