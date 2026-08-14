@@ -33,7 +33,7 @@ import {
   type OsStatus,
 } from "@/lib/os-utils";
 import { toast } from "sonner";
-import { ArrowLeft, Wallet, ClipboardList, TrendingUp, Pencil } from "lucide-react";
+import { ArrowLeft, Wallet, ClipboardList, TrendingUp, Pencil, Trash2 } from "lucide-react";
 
 export const Route = createFileRoute("/_app/clientes/$id")({
   head: () => ({ meta: [{ title: "Cliente — Sartori Group" }] }),
@@ -117,6 +117,34 @@ function ClienteDetail() {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  const removeCliente = useMutation({
+    mutationFn: async () => {
+      const { error } = await supabase.from("clientes").delete().eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success("Cliente excluído.");
+      qc.invalidateQueries({ queryKey: ["clientes"] });
+      navigate({ to: "/clientes" });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  function confirmarExclusao() {
+    // Cliente com O.S. vinculada não pode ser excluído: o banco não apaga a O.S.
+    // junto, só desvincula o cliente_id (ON DELETE SET NULL) — isso deixaria
+    // ordens órfãs e perderia histórico de faturamento silenciosamente.
+    if (rows.length > 0) {
+      toast.error(
+        `Este cliente tem ${rows.length} O.S. vinculada${rows.length > 1 ? "s" : ""} e não pode ser excluído. Reatribua ou remova essas O.S. primeiro.`,
+      );
+      return;
+    }
+    if (confirm(`Excluir o cliente "${cliente?.nome}"? Essa ação não pode ser desfeita.`)) {
+      removeCliente.mutate();
+    }
+  }
+
   if (!cliente) return <div className="p-6 text-muted-foreground">Carregando...</div>;
 
   return (
@@ -137,74 +165,87 @@ function ClienteDetail() {
           </div>
         </div>
 
-        <Dialog open={editOpen} onOpenChange={setEditOpen}>
-          <DialogTrigger asChild>
-            <Button variant="outline" size="sm" onClick={abrirEdicao}>
-              <Pencil className="h-4 w-4 mr-2" />
-              Editar cliente
-            </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Editar cliente</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-3">
-              <div>
-                <Label>Nome *</Label>
-                <Input
-                  value={form.nome ?? ""}
-                  onChange={(e) => setForm((f) => ({ ...f, nome: e.target.value }))}
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <Label>Contato</Label>
-                  <Input
-                    value={form.contato ?? ""}
-                    onChange={(e) => setForm((f) => ({ ...f, contato: e.target.value }))}
-                  />
-                </div>
-                <div>
-                  <Label>CNPJ</Label>
-                  <Input
-                    value={form.cnpj ?? ""}
-                    onChange={(e) => setForm((f) => ({ ...f, cnpj: e.target.value }))}
-                  />
-                </div>
-                <div>
-                  <Label>E-mail</Label>
-                  <Input
-                    type="email"
-                    value={form.email ?? ""}
-                    onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
-                  />
-                </div>
-                <div>
-                  <Label>Telefone</Label>
-                  <Input
-                    value={form.telefone ?? ""}
-                    onChange={(e) => setForm((f) => ({ ...f, telefone: e.target.value }))}
-                  />
-                </div>
-              </div>
-              <div>
-                <Label>Observações</Label>
-                <Textarea
-                  value={form.observacoes ?? ""}
-                  onChange={(e) => setForm((f) => ({ ...f, observacoes: e.target.value }))}
-                />
-              </div>
-            </div>
-            <DialogFooter>
-              <Button variant="ghost" onClick={() => setEditOpen(false)}>
-                Cancelar
+        <div className="flex items-center gap-2">
+          <Dialog open={editOpen} onOpenChange={setEditOpen}>
+            <DialogTrigger asChild>
+              <Button variant="outline" size="sm" onClick={abrirEdicao}>
+                <Pencil className="h-4 w-4 mr-2" />
+                Editar cliente
               </Button>
-              <Button disabled={salvarEdicao.isPending} onClick={() => salvarEdicao.mutate()}>
-                {salvarEdicao.isPending ? "Salvando..." : "Salvar alterações"}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Editar cliente</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-3">
+                <div>
+                  <Label>Nome *</Label>
+                  <Input
+                    value={form.nome ?? ""}
+                    onChange={(e) => setForm((f) => ({ ...f, nome: e.target.value }))}
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <Label>Contato</Label>
+                    <Input
+                      value={form.contato ?? ""}
+                      onChange={(e) => setForm((f) => ({ ...f, contato: e.target.value }))}
+                    />
+                  </div>
+                  <div>
+                    <Label>CNPJ</Label>
+                    <Input
+                      value={form.cnpj ?? ""}
+                      onChange={(e) => setForm((f) => ({ ...f, cnpj: e.target.value }))}
+                    />
+                  </div>
+                  <div>
+                    <Label>E-mail</Label>
+                    <Input
+                      type="email"
+                      value={form.email ?? ""}
+                      onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
+                    />
+                  </div>
+                  <div>
+                    <Label>Telefone</Label>
+                    <Input
+                      value={form.telefone ?? ""}
+                      onChange={(e) => setForm((f) => ({ ...f, telefone: e.target.value }))}
+                    />
+                  </div>
+                </div>
+                <div>
+                  <Label>Observações</Label>
+                  <Textarea
+                    value={form.observacoes ?? ""}
+                    onChange={(e) => setForm((f) => ({ ...f, observacoes: e.target.value }))}
+                  />
+                </div>
+              </div>
+              <DialogFooter>
+                <Button variant="ghost" onClick={() => setEditOpen(false)}>
+                  Cancelar
+                </Button>
+                <Button disabled={salvarEdicao.isPending} onClick={() => salvarEdicao.mutate()}>
+                  {salvarEdicao.isPending ? "Salvando..." : "Salvar alterações"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          <Button
+            variant="outline"
+            size="sm"
+            className="text-destructive hover:text-destructive"
+            disabled={removeCliente.isPending}
+            onClick={confirmarExclusao}
+          >
+            <Trash2 className="h-4 w-4 mr-2" />
+            Excluir cliente
+          </Button>
+        </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-4">
