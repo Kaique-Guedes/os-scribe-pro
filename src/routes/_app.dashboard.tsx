@@ -191,6 +191,12 @@ function DashboardPage() {
     isAtrasada(r.data_entrega_prev, r.data_entrega_real, r.status as OsStatus),
   );
   const entregues = rows.filter((r) => r.status === "entregue");
+  // Card "Entregues" do topo mostra só o mês de referência (mês escolhido no
+  // filtro, ou mês atual se nenhum período foi selecionado) — não o histórico todo.
+  const mesReferenciaTopo = periodo !== "todos" ? periodo : today.slice(0, 7);
+  const entreguesNoMes = rows.filter(
+    (r) => r.status === "entregue" && r.data_entrega_real?.slice(0, 7) === mesReferenciaTopo,
+  );
   const valorCarteira = rows
     .filter((r) => !["entregue", "cancelada"].includes(r.status))
     .reduce((s, r) => s + Number(r.valor_total || 0), 0);
@@ -317,13 +323,6 @@ function DashboardPage() {
   const pctNoPrazo = entregues.length
     ? Math.round((entreguesNoPrazo / entregues.length) * 100)
     : null;
-
-  // Tabela detalhada (ordenada por prazo, mais urgentes primeiro)
-  const tabelaRows = useMemo(() => {
-    return [...rows].sort((a, b) =>
-      (a.data_entrega_prev ?? "9999").localeCompare(b.data_entrega_prev ?? "9999"),
-    );
-  }, [rows]);
 
   // ---- Comparativo Previsto x Realizado (entregas e faturamento) ----
   // Respeita o filtro de cliente; usa o mês selecionado no filtro (ou o mês atual, se "todos")
@@ -460,7 +459,12 @@ function DashboardPage() {
           value={atrasadas.length}
           tone="destructive"
         />
-        <MetricCard icon={CheckCircle2} label="Entregues" value={entregues.length} tone="success" />
+        <MetricCard
+          icon={CheckCircle2}
+          label="Entregues no mês"
+          value={entreguesNoMes.length}
+          tone="success"
+        />
       </div>
 
       <div className="grid gap-4 grid-cols-2 lg:grid-cols-3">
@@ -1016,75 +1020,6 @@ function DashboardPage() {
         </Card>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Todas as O.S. do filtro aplicado</CardTitle>
-          <CardDescription>
-            {tabelaRows.length} ordens listadas, ordenadas por prazo de entrega.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Número</TableHead>
-                  <TableHead>Cliente</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Prazo</TableHead>
-                  <TableHead>Entregue em</TableHead>
-                  <TableHead className="text-right">Valor</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {tabelaRows.map((r) => {
-                  const atrasada = isAtrasada(
-                    r.data_entrega_prev,
-                    r.data_entrega_real,
-                    r.status as OsStatus,
-                  );
-                  return (
-                    <TableRow key={r.id} className={atrasada ? "bg-destructive/5" : undefined}>
-                      <TableCell>
-                        <Link
-                          to="/ordens/$id"
-                          params={{ id: r.id }}
-                          className="font-medium hover:underline"
-                        >
-                          {r.numero_os}
-                        </Link>
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {r.clientes?.nome ?? "—"}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline" className={OS_STATUS_CLASS[r.status as OsStatus]}>
-                          {OS_STATUS_LABEL[r.status as OsStatus]}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className={atrasada ? "text-destructive font-medium" : undefined}>
-                        {formatDate(r.data_entrega_prev)}
-                      </TableCell>
-                      <TableCell>{formatDate(r.data_entrega_real)}</TableCell>
-                      <TableCell className="text-right">{formatBRL(r.valor_total)}</TableCell>
-                    </TableRow>
-                  );
-                })}
-                {tabelaRows.length === 0 && (
-                  <TableRow>
-                    <TableCell
-                      colSpan={6}
-                      className="text-center text-sm text-muted-foreground py-8"
-                    >
-                      Nenhuma O.S. encontrada para o filtro selecionado.
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
-          </div>
-        </CardContent>
-      </Card>
     </div>
   );
 }
