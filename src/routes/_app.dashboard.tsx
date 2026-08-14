@@ -155,6 +155,8 @@ function DashboardPage() {
   // ---- Filtros ----
   const [clienteId, setClienteId] = useState<string>("todos");
   const [periodo, setPeriodo] = useState<string>("todos"); // "YYYY-MM"
+  // Janela de meses do gráfico de tendência (Previsto x Realizado). 3, 6 ou 12 meses pra trás.
+  const [janelaMeses, setJanelaMeses] = useState<3 | 6 | 12>(6);
 
   const periodosDisponiveis = useMemo(() => {
     const set = new Set<string>();
@@ -191,6 +193,12 @@ function DashboardPage() {
     isAtrasada(r.data_entrega_prev, r.data_entrega_real, r.status as OsStatus),
   );
   const entregues = rows.filter((r) => r.status === "entregue");
+  // Quais O.S. já têm ao menos uma nota fiscal emitida — usado pra marcar
+  // "já faturado" na lista de faturamento previsto (item #3 do pedido do usuário).
+  const osIdsComNotaFiscal = useMemo(
+    () => new Set((notasFiscaisData ?? []).map((n) => n.os_id)),
+    [notasFiscaisData],
+  );
   // Card "Entregues" do topo mostra só o mês de referência (mês escolhido no
   // filtro, ou mês atual se nenhum período foi selecionado) — não o histórico todo.
   const mesReferenciaTopo = periodo !== "todos" ? periodo : today.slice(0, 7);
@@ -367,11 +375,11 @@ function DashboardPage() {
     return `${MESES[Number(m) - 1]}/${y}`;
   })();
 
-  // Tendência dos últimos 6 meses (a partir do mês de referência, para trás)
+  // Tendência dos últimos N meses (a partir do mês de referência, para trás)
   const tendenciaComparativo = useMemo(() => {
     const meses: string[] = [];
     const [y, m] = mesReferencia.split("-").map(Number);
-    for (let i = 5; i >= 0; i--) {
+    for (let i = janelaMeses - 1; i >= 0; i--) {
       const d = new Date(y, m - 1 - i, 1);
       meses.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
     }
@@ -386,7 +394,7 @@ function DashboardPage() {
         "Faturamento realizado": c.faturamentoRealizado,
       };
     });
-  }, [rowsPorCliente, notasPorCliente, mesReferencia, calcularComparativo]);
+  }, [rowsPorCliente, notasPorCliente, mesReferencia, calcularComparativo, janelaMeses]);
 
   // Drill-down: qual lista mostrar em detalhe (clicando nos cards do comparativo)
   const [detalheAberto, setDetalheAberto] = useState<
@@ -580,31 +588,58 @@ function DashboardPage() {
                           <TableHead>Cliente</TableHead>
                           <TableHead>Prazo de entrega</TableHead>
                           <TableHead className="text-right">Valor</TableHead>
+                          <TableHead>Situação</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {comparativoMes.previstasNoMes.map((r) => (
-                          <TableRow key={r.id}>
-                            <TableCell>
-                              <Link
-                                to="/ordens/$id"
-                                params={{ id: r.id }}
-                                className="font-medium hover:underline"
-                              >
-                                {r.numero_os}
-                              </Link>
-                            </TableCell>
-                            <TableCell className="text-muted-foreground">
-                              {r.clientes?.nome ?? "—"}
-                            </TableCell>
-                            <TableCell>{formatDate(r.data_entrega_prev)}</TableCell>
-                            <TableCell className="text-right">{formatBRL(r.valor_total)}</TableCell>
-                          </TableRow>
-                        ))}
+                        {comparativoMes.previstasNoMes.map((r) => {
+                          const jaEntregue = r.status === "entregue";
+                          const jaFaturado = osIdsComNotaFiscal.has(r.id);
+                          return (
+                            <TableRow key={r.id}>
+                              <TableCell>
+                                <Link
+                                  to="/ordens/$id"
+                                  params={{ id: r.id }}
+                                  className="font-medium hover:underline"
+                                >
+                                  {r.numero_os}
+                                </Link>
+                              </TableCell>
+                              <TableCell className="text-muted-foreground">
+                                {r.clientes?.nome ?? "—"}
+                              </TableCell>
+                              <TableCell>{formatDate(r.data_entrega_prev)}</TableCell>
+                              <TableCell className="text-right">
+                                {formatBRL(r.valor_total)}
+                              </TableCell>
+                              <TableCell>
+                                {detalheAberto === "previstas" &&
+                                  (jaEntregue ? (
+                                    <Badge variant="outline" className="text-success border-success/40 bg-success/10">
+                                      <CheckCircle2 className="h-3 w-3 mr-1" />
+                                      Entregue
+                                    </Badge>
+                                  ) : (
+                                    <span className="text-xs text-muted-foreground">Pendente</span>
+                                  ))}
+                                {detalheAberto === "fatPrevisto" &&
+                                  (jaFaturado ? (
+                                    <Badge variant="outline" className="text-success border-success/40 bg-success/10">
+                                      <Receipt className="h-3 w-3 mr-1" />
+                                      Faturado
+                                    </Badge>
+                                  ) : (
+                                    <span className="text-xs text-muted-foreground">Não faturado</span>
+                                  ))}
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
                         {comparativoMes.previstasNoMes.length === 0 && (
                           <TableRow>
                             <TableCell
-                              colSpan={4}
+                              colSpan={5}
                               className="text-center text-sm text-muted-foreground py-6"
                             >
                               Nenhuma O.S. com entrega prevista neste mês.
@@ -707,10 +742,30 @@ function DashboardPage() {
             </div>
           )}
 
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-medium text-muted-foreground">Tendência</p>
+            <div className="inline-flex rounded-md border p-0.5">
+              {([3, 6, 12] as const).map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  onClick={() => setJanelaMeses(n)}
+                  className={`px-2.5 py-1 text-xs rounded ${
+                    janelaMeses === n
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:bg-muted"
+                  }`}
+                >
+                  {n === 12 ? "Anual" : `${n} meses`}
+                </button>
+              ))}
+            </div>
+          </div>
+
           <div className="grid gap-4 lg:grid-cols-2">
             <div className="h-56">
               <p className="text-xs text-muted-foreground mb-1">
-                Entregas — previstas x realizadas (6 meses)
+                Entregas — previstas x realizadas ({janelaMeses === 12 ? "12 meses" : `${janelaMeses} meses`})
               </p>
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart
@@ -737,7 +792,7 @@ function DashboardPage() {
             </div>
             <div className="h-56">
               <p className="text-xs text-muted-foreground mb-1">
-                Faturamento — previsto x realizado (6 meses)
+                Faturamento — previsto x realizado ({janelaMeses === 12 ? "12 meses" : `${janelaMeses} meses`})
               </p>
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart
