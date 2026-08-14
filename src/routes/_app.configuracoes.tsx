@@ -162,6 +162,7 @@ function ConfigPage() {
           <p><b>Administrador:</b> acesso total, gerencia usuários.</p>
           <p><b>PCP / Planejamento:</b> cria, edita e exclui O.S. e clientes.</p>
           <p><b>Produção:</b> atualiza etapas, datas e status de produção.</p>
+          <p><b>Almoxarifado:</b> acessa só a Produção; atualiza pedido e chegada de material, e cotações.</p>
           <p><b>Visualizador:</b> apenas consulta.</p>
         </CardContent>
       </Card>
