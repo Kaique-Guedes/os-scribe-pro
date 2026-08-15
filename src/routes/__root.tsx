@@ -12,6 +12,7 @@ import { useEffect, type ReactNode } from "react";
 import appCss from "../styles.css?url";
 import { supabase } from "@/integrations/supabase/client";
 import { Toaster } from "@/components/ui/sonner";
+import { THEME_BLOCKING_SCRIPT } from "@/hooks/use-preferences";
 
 function NotFoundComponent() {
   return (
@@ -99,7 +100,10 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
 function RootShell({ children }: { children: ReactNode }) {
   return (
     <html lang="pt-BR">
-      <head><HeadContent /></head>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_BLOCKING_SCRIPT }} />
+        <HeadContent />
+      </head>
       <body>
         {children}
         <Scripts />
