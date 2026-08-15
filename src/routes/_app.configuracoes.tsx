@@ -13,10 +13,12 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogT
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useSession, useRoles, isAdmin } from "@/hooks/use-auth";
+import { useThemePref, useDensityPref, type ThemePref, type DensityPref } from "@/hooks/use-preferences";
+import { Switch } from "@/components/ui/switch";
 import { ROLE_LABEL, type AppRole } from "@/lib/os-utils";
 import { inviteUser, deleteUser } from "@/lib/admin-users.functions";
 import { toast } from "sonner";
-import { Shield, Info, UserPlus, Trash2 } from "lucide-react";
+import { Shield, Info, UserPlus, Trash2, Sun, Moon, Monitor, LayoutGrid, Rows3, Bell } from "lucide-react";
 
 export const Route = createFileRoute("/_app/configuracoes")({
   head: () => ({ meta: [{ title: "Configurações — Sartori Group" }] }),
@@ -30,6 +32,37 @@ function ConfigPage() {
   const { user } = useSession();
   const { data: myRoles = [] } = useRoles(user?.id);
   const admin = isAdmin(myRoles);
+  const { theme, setTheme } = useThemePref();
+  const { density, setDensity } = useDensityPref();
+
+  // Preferência de notificação por e-mail: fica no banco (profiles), não no
+  // navegador, porque quem vai ler isso no futuro é um job rodando no
+  // servidor, não a tela do usuário.
+  const { data: meuPerfil } = useQuery({
+    queryKey: ["meu-perfil-notif", user?.id],
+    enabled: !!user?.id,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("notif_atraso_email")
+        .eq("id", user!.id)
+        .single();
+      if (error) throw error;
+      return data;
+    },
+  });
+
+  const salvarNotif = useMutation({
+    mutationFn: async (valor: boolean) => {
+      const { error } = await supabase
+        .from("profiles")
+        .update({ notif_atraso_email: valor })
+        .eq("id", user!.id);
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["meu-perfil-notif", user?.id] }),
+    onError: (e: Error) => toast.error(e.message),
+  });
 
   const { data: usuarios } = useQuery({
     queryKey: ["usuarios-config"],
@@ -151,6 +184,81 @@ function ConfigPage() {
               )}
             </TableBody>
           </Table>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Aparência e notificações</CardTitle>
+          <CardDescription>Preferências salvas neste navegador (tema e densidade) e na sua conta (notificações).</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          <div>
+            <Label className="text-sm">Tema</Label>
+            <div className="inline-flex rounded-md border p-0.5 mt-1.5 ml-2">
+              {(
+                [
+                  { value: "light" as ThemePref, label: "Claro", Icon: Sun },
+                  { value: "dark" as ThemePref, label: "Escuro", Icon: Moon },
+                  { value: "system" as ThemePref, label: "Sistema", Icon: Monitor },
+                ]
+              ).map(({ value, label, Icon }) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setTheme(value)}
+                  className={`px-2.5 py-1.5 text-xs rounded flex items-center gap-1.5 ${
+                    theme === value ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"
+                  }`}
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <Label className="text-sm">Densidade da interface</Label>
+            <div className="inline-flex rounded-md border p-0.5 mt-1.5 ml-2">
+              {(
+                [
+                  { value: "comfortable" as DensityPref, label: "Confortável", Icon: Rows3 },
+                  { value: "compact" as DensityPref, label: "Compacta", Icon: LayoutGrid },
+                ]
+              ).map(({ value, label, Icon }) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setDensity(value)}
+                  className={`px-2.5 py-1.5 text-xs rounded flex items-center gap-1.5 ${
+                    density === value ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"
+                  }`}
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between pt-1 border-t">
+            <div className="flex items-start gap-2 pt-3">
+              <Bell className="h-4 w-4 mt-0.5 text-muted-foreground" />
+              <div>
+                <Label className="text-sm">Avisar por e-mail quando uma O.S. atrasar</Label>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Envio automático ainda não está ativo no servidor — isso salva sua preferência pra quando ativarmos.
+                </p>
+              </div>
+            </div>
+            <Switch
+              className="mt-3"
+              checked={meuPerfil?.notif_atraso_email ?? true}
+              disabled={!meuPerfil || salvarNotif.isPending}
+              onCheckedChange={(v) => salvarNotif.mutate(v)}
+            />
+          </div>
         </CardContent>
       </Card>
 
