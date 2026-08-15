@@ -14,6 +14,7 @@ export type Database = {
           id: string;
           nome: string;
           email: string | null;
+          notif_atraso_email: boolean;
           created_at: string;
           updated_at: string;
         };
@@ -21,6 +22,7 @@ export type Database = {
           id: string;
           nome?: string;
           email?: string | null;
+          notif_atraso_email?: boolean;
           created_at?: string;
           updated_at?: string;
         };
@@ -28,6 +30,7 @@ export type Database = {
           id?: string;
           nome?: string;
           email?: string | null;
+          notif_atraso_email?: boolean;
           created_at?: string;
           updated_at?: string;
         };
