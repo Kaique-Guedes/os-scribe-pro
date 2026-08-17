@@ -1,4 +1,4 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { z } from "zod";
 import { supabase } from "@/integrations/supabase/client";
@@ -21,6 +21,17 @@ const ordensSearchSchema = z.object({
   dataAte: z.string().catch(""),
 });
 
+// Reaproveitado por quem navega pra "/ordens" sem vir de um filtro específico
+// (ex: botão Voltar sem histórico, cancelar Nova O.S.) — evita repetir os
+// mesmos 5 campos em 4 arquivos diferentes e desalinhar no futuro.
+export const ORDENS_SEARCH_DEFAULTS = {
+  busca: "",
+  status: "all",
+  cliente: "all",
+  dataDe: "",
+  dataAte: "",
+};
+
 export const Route = createFileRoute("/_app/ordens/")({
   head: () => ({ meta: [{ title: "Ordens de Serviço — Sartori Group" }] }),
   validateSearch: ordensSearchSchema,
@@ -28,7 +39,7 @@ export const Route = createFileRoute("/_app/ordens/")({
 });
 
 function OrdensList() {
-  const navigate = useNavigate();
+  const navigate = Route.useNavigate();
   const {
     busca: search,
     status: statusFilter,
