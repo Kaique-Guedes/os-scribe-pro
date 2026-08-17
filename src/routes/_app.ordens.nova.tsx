@@ -1,4 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { ORDENS_SEARCH_DEFAULTS } from "@/routes/_app.ordens.index";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
@@ -139,7 +140,7 @@ function NovaOsPage() {
   return (
     <div className="p-6 max-w-5xl mx-auto space-y-5">
       <div className="flex items-center gap-3">
-        <Button variant="ghost" size="sm" onClick={() => navigate({ to: "/ordens" })}><ArrowLeft className="h-4 w-4 mr-1" />Voltar</Button>
+        <Button variant="ghost" size="sm" onClick={() => navigate({ to: "/ordens", search: ORDENS_SEARCH_DEFAULTS })}><ArrowLeft className="h-4 w-4 mr-1" />Voltar</Button>
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Nova Ordem de Serviço</h1>
           <p className="text-sm text-muted-foreground">Cadastre manualmente ou envie um documento para extração automática.</p>
@@ -225,7 +226,7 @@ function NovaOsPage() {
           </div>
 
           <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" onClick={() => navigate({ to: "/ordens" })}>Cancelar</Button>
+            <Button variant="outline" onClick={() => navigate({ to: "/ordens", search: ORDENS_SEARCH_DEFAULTS })}>Cancelar</Button>
             <Button disabled={create.isPending} onClick={() => create.mutate()}>
               {create.isPending ? "Salvando..." : "Salvar O.S."}
             </Button>
