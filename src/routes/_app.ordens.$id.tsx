@@ -40,6 +40,7 @@ import {
   type EtapaTipo,
   type MaterialCategoria,
 } from "@/lib/os-utils";
+import { ORDENS_SEARCH_DEFAULTS } from "@/routes/_app.ordens.index";
 import type { TablesUpdate } from "@/integrations/supabase/types";
 import { extractNotaFiscalFromDocument } from "@/lib/nota-fiscal-extract.functions";
 import { extractCotacaoFromDocument, type ExtractedCotacaoItem } from "@/lib/cotacao-extract.functions";
@@ -83,7 +84,7 @@ function OsDetail() {
   // com fallback pra lista de O.S. caso não haja histórico (ex: acesso direto por link).
   const voltarParaLista = () => {
     if (window.history.length > 1) router.history.back();
-    else navigate({ to: "/ordens" });
+    else navigate({ to: "/ordens", search: ORDENS_SEARCH_DEFAULTS });
   };
   const qc = useQueryClient();
   const { user } = useSession();
@@ -430,13 +431,35 @@ function OsDetail() {
       // inclusive "atrasada", já que uma O.S. atrasada que finalmente foi entregue
       // deve sim virar "entregue"). "entrega" nunca é editável por almoxarifado
       // (fora de ETAPAS_ALMOXARIFADO), então não precisa do guard de `restrito` abaixo.
-      if (tipo === "entrega" && status === "concluido") {
-        const { error: osErr } = await supabase
-          .from("ordens_servico")
-          .update({ status: "entregue", data_entrega_real: data })
-          .eq("id", id)
-          .not("status", "in", "(entregue,cancelada)");
-        if (osErr) throw osErr;
+      if (tipo === "entrega") {
+        if (status === "concluido") {
+          const { error: osErr } = await supabase
+            .from("ordens_servico")
+            .update({ status: "entregue", data_entrega_real: data })
+            .eq("id", id)
+            .not("status", "in", "(entregue,cancelada)");
+          if (osErr) throw osErr;
+        } else {
+          // Desmarcou "Entrega" depois de já ter marcado: desfaz. Só mexe se o
+          // status ainda for "entregue" (se alguém já trocou manualmente pra outra
+          // coisa depois, não sobrescreve). O status de volta é recalculado a
+          // partir de quais outras etapas continuam concluídas — não um valor fixo,
+          // pra não "esquecer" progresso real (ex: pintura já tinha sido feita).
+          const outraConcluida = (t: EtapaTipo) => etapas?.find((x) => x.tipo === t)?.status === "concluido";
+          const statusRevertido: OsStatus = outraConcluida("pintura")
+            ? "em_pintura"
+            : outraConcluida("chegada_material")
+            ? "em_producao"
+            : outraConcluida("solicitacao_material")
+            ? "aguardando_material"
+            : "aberta";
+          const { error: osErr } = await supabase
+            .from("ordens_servico")
+            .update({ status: statusRevertido, data_entrega_real: null })
+            .eq("id", id)
+            .eq("status", "entregue");
+          if (osErr) throw osErr;
+        }
         return;
       }
 
@@ -829,7 +852,7 @@ function OsDetail() {
     },
     onSuccess: () => {
       toast.success("O.S. excluída");
-      navigate({ to: "/ordens" });
+      navigate({ to: "/ordens", search: ORDENS_SEARCH_DEFAULTS });
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -1110,8 +1133,8 @@ function OsDetail() {
               </div>
             </CardContent>
           </Card>
-          )}
         </div>
+          )}
 
         <div className="space-y-5">
           <Card>
