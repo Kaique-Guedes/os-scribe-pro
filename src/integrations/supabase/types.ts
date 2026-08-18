@@ -652,6 +652,8 @@ export type Database = {
         | "em_pintura"
         | "pronta"
         | "entregue"
+        | "faturado"
+        | "faturado_parcialmente"
         | "atrasada"
         | "cancelada";
       etapa_tipo:
