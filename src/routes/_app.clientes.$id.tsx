@@ -30,6 +30,8 @@ import {
   formatBRL,
   formatDate,
   diffDays,
+  foiEntregue,
+  ehStatusFinalizado,
   type OsStatus,
 } from "@/lib/os-utils";
 import { toast } from "sonner";
@@ -62,12 +64,12 @@ function ClienteDetail() {
   });
 
   const rows = ordens ?? [];
-  const ativas = rows.filter((r) => !["entregue", "cancelada"].includes(r.status));
+  const ativas = rows.filter((r) => !ehStatusFinalizado(r.status as OsStatus));
   const valorCarteira = ativas.reduce((s, r) => s + Number(r.valor_total || 0), 0);
   const valorTotal = rows.reduce((s, r) => s + Number(r.valor_total || 0), 0);
 
   const entregues = rows.filter(
-    (r) => r.status === "entregue" && r.data_entrega_prev && r.data_entrega_real,
+    (r) => foiEntregue(r.status as OsStatus) && r.data_entrega_prev && r.data_entrega_real,
   );
   const leadTimes = entregues
     .map((r) => diffDays(r.data_entrega_prev, r.data_entrega_real))
