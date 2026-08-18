@@ -36,6 +36,7 @@ import {
   formatDate,
   isAtrasada,
   diffDays,
+  statusPorFaturamento,
   type OsStatus,
   type EtapaTipo,
   type MaterialCategoria,
@@ -331,10 +332,25 @@ function OsDetail() {
         uploaded_by: user.id,
       });
       if (nfErr) throw nfErr;
+
+      // Lançou nota fiscal: recalcula o status de faturamento comparando o total
+      // já faturado (soma de todas as NFs, incluindo essa que acabou de entrar)
+      // com o valor do contrato (valor_total). O `.in("status", [...])` garante
+      // que só mexe numa O.S. que já está na "família" de entregue/faturado —
+      // não força status de faturamento numa O.S. que ainda nem foi entregue.
+      const novoTotalFaturado = totalFaturadoNf + valorNum;
+      const novoStatus = statusPorFaturamento(novoTotalFaturado, Number(os?.valor_total || 0));
+      const { error: osErr } = await supabase
+        .from("ordens_servico")
+        .update({ status: novoStatus })
+        .eq("id", id)
+        .in("status", ["entregue", "faturado_parcialmente", "faturado"]);
+      if (osErr) throw osErr;
     },
     onSuccess: () => {
       toast.success("Nota fiscal anexada.");
       qc.invalidateQueries({ queryKey: ["os-notas-fiscais", id] });
+      qc.invalidateQueries({ queryKey: ["os", id] });
       qc.invalidateQueries({ queryKey: ["ordens"] });
       qc.invalidateQueries({ queryKey: ["dashboard-os"] });
       cancelarNf();
@@ -343,14 +359,28 @@ function OsDetail() {
   });
 
   const removerNf = useMutation({
-    mutationFn: async (nf: { id: string; storage_path: string }) => {
+    mutationFn: async (nf: { id: string; storage_path: string; valor: number }) => {
       await supabase.storage.from("os-files").remove([nf.storage_path]);
       const { error } = await supabase.from("os_notas_fiscais").delete().eq("id", nf.id);
       if (error) throw error;
+
+      // Removeu nota fiscal: recalcula o status de faturamento com o total
+      // faturado SEM essa nota (pode voltar de "faturado"/"faturado_parcialmente"
+      // até "entregue" de novo, se essa era a última nota).
+      const novoTotalFaturado = totalFaturadoNf - Number(nf.valor || 0);
+      const novoStatus = statusPorFaturamento(novoTotalFaturado, Number(os?.valor_total || 0));
+      const { error: osErr } = await supabase
+        .from("ordens_servico")
+        .update({ status: novoStatus })
+        .eq("id", id)
+        .in("status", ["entregue", "faturado_parcialmente", "faturado"]);
+      if (osErr) throw osErr;
     },
     onSuccess: () => {
       toast.success("Nota fiscal removida.");
       qc.invalidateQueries({ queryKey: ["os-notas-fiscais", id] });
+      qc.invalidateQueries({ queryKey: ["os", id] });
+      qc.invalidateQueries({ queryKey: ["ordens"] });
       qc.invalidateQueries({ queryKey: ["dashboard-os"] });
     },
     onError: (e: Error) => toast.error(e.message),
@@ -922,7 +952,7 @@ function OsDetail() {
         </div>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className={restrito ? "grid gap-4 lg:grid-cols-3" : "grid gap-4 lg:grid-cols-4"}>
         {!restrito && <SummaryCard label="Valor total" value={formatBRL(Number(os.valor_total))} />}
         <SummaryCard
           label="Entrega prevista"
@@ -940,6 +970,19 @@ function OsDetail() {
                   : `${dias > 0 ? "+" : ""}${dias} dias`
             }
             tone={dias != null && dias > 0 && !os.data_entrega_real ? "danger" : "success"}
+          />
+        )}
+        {!restrito && (
+          <SummaryCard
+            label="Faturado"
+            value={`${formatBRL(totalFaturadoNf)} de ${formatBRL(Number(os.valor_total))}`}
+            tone={
+              totalFaturadoNf <= 0
+                ? undefined
+                : totalFaturadoNf >= Number(os.valor_total || 0)
+                  ? "success"
+                  : "danger"
+            }
           />
         )}
       </div>
@@ -1531,7 +1574,7 @@ function OsDetail() {
                         className="h-7 w-7 shrink-0 text-destructive"
                         onClick={() =>
                           confirm("Remover esta nota fiscal?") &&
-                          removerNf.mutate({ id: nf.id, storage_path: nf.storage_path })
+                          removerNf.mutate({ id: nf.id, storage_path: nf.storage_path, valor: Number(nf.valor) })
                         }
                       >
                         <Trash2 className="h-3.5 w-3.5" />
