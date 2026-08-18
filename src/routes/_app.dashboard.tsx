@@ -29,6 +29,8 @@ import {
   formatDate,
   isAtrasada,
   diffDays,
+  foiEntregue,
+  ehStatusFinalizado,
   type OsStatus,
   type EtapaTipo,
 } from "@/lib/os-utils";
@@ -185,14 +187,14 @@ function DashboardPage() {
   const today = new Date().toISOString().slice(0, 10);
   const in7 = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
 
-  const abertas = rows.filter((r) => !["entregue", "cancelada"].includes(r.status)).length;
+  const abertas = rows.filter((r) => !ehStatusFinalizado(r.status as OsStatus)).length;
   const emProducao = rows.filter((r) =>
     ["em_producao", "em_pintura", "aguardando_material"].includes(r.status),
   ).length;
   const atrasadas = rows.filter((r) =>
     isAtrasada(r.data_entrega_prev, r.data_entrega_real, r.status as OsStatus),
   );
-  const entregues = rows.filter((r) => r.status === "entregue");
+  const entregues = rows.filter((r) => foiEntregue(r.status as OsStatus));
   // Quais O.S. já têm ao menos uma nota fiscal emitida — usado pra marcar
   // "já faturado" na lista de faturamento previsto (item #3 do pedido do usuário).
   const osIdsComNotaFiscal = useMemo(
@@ -203,10 +205,10 @@ function DashboardPage() {
   // filtro, ou mês atual se nenhum período foi selecionado) — não o histórico todo.
   const mesReferenciaTopo = periodo !== "todos" ? periodo : today.slice(0, 7);
   const entreguesNoMes = rows.filter(
-    (r) => r.status === "entregue" && r.data_entrega_real?.slice(0, 7) === mesReferenciaTopo,
+    (r) => foiEntregue(r.status as OsStatus) && r.data_entrega_real?.slice(0, 7) === mesReferenciaTopo,
   );
   const valorCarteira = rows
-    .filter((r) => !["entregue", "cancelada"].includes(r.status))
+    .filter((r) => !ehStatusFinalizado(r.status as OsStatus))
     .reduce((s, r) => s + Number(r.valor_total || 0), 0);
 
   const statusCounts = rows.reduce<Record<string, number>>((acc, r) => {
@@ -235,13 +237,13 @@ function DashboardPage() {
         r.data_entrega_prev &&
         r.data_entrega_prev >= today &&
         r.data_entrega_prev <= in7 &&
-        !["entregue", "cancelada"].includes(r.status),
+        !ehStatusFinalizado(r.status as OsStatus),
     )
     .slice(0, 8);
 
   const valorPorStatus = Object.entries(
     rows.reduce<Record<string, number>>((a, r) => {
-      if (!["entregue", "cancelada"].includes(r.status)) {
+      if (!ehStatusFinalizado(r.status as OsStatus)) {
         a[r.status] = (a[r.status] || 0) + Number(r.valor_total || 0);
       }
       return a;
@@ -253,7 +255,7 @@ function DashboardPage() {
   // ---- Risco de atraso: compara o quanto do prazo já passou com o quanto do trabalho já foi feito ----
   const riscoAtraso = useMemo(() => {
     return rows
-      .filter((r) => !["entregue", "cancelada"].includes(r.status))
+      .filter((r) => !ehStatusFinalizado(r.status as OsStatus))
       .map((r) => {
         const progresso = etapasPorOs.get(r.id);
         const totalEtapas = progresso?.total || ETAPA_ORDER.length;
@@ -593,7 +595,7 @@ function DashboardPage() {
                       </TableHeader>
                       <TableBody>
                         {comparativoMes.previstasNoMes.map((r) => {
-                          const jaEntregue = r.status === "entregue";
+                          const jaEntregue = foiEntregue(r.status as OsStatus);
                           const jaFaturado = osIdsComNotaFiscal.has(r.id);
                           return (
                             <TableRow key={r.id}>
