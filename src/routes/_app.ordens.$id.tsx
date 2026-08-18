@@ -401,6 +401,27 @@ function OsDetail() {
 
   const totalFaturadoNf = (notasFiscais ?? []).reduce((s, n) => s + Number(n.valor || 0), 0);
 
+  // Sincronização "self-healing": corrige o status de faturamento de O.S. que
+  // ficaram desatualizadas (ex.: nota fiscal lançada antes dessa automação
+  // existir). Roda sozinho toda vez que a tela abre, mas só mexe se a O.S. já
+  // está na família entregue/faturado — nunca em O.S. ainda em produção — e só
+  // se o status salvo for diferente do que deveria ser pelo valor faturado.
+  useEffect(() => {
+    if (restrito || !os || !notasFiscais) return;
+    if (!["entregue", "faturado_parcialmente", "faturado"].includes(os.status)) return;
+    const statusCorreto = statusPorFaturamento(totalFaturadoNf, Number(os.valor_total || 0));
+    if (statusCorreto !== os.status) {
+      supabase
+        .from("ordens_servico")
+        .update({ status: statusCorreto })
+        .eq("id", id)
+        .in("status", ["entregue", "faturado_parcialmente", "faturado"])
+        .then(({ error }) => {
+          if (!error) qc.invalidateQueries({ queryKey: ["os", id] });
+        });
+    }
+  }, [restrito, os, notasFiscais, totalFaturadoNf, id, qc]);
+
   const [edit, setEdit] = useState<Record<string, unknown>>({});
   useEffect(() => {
     setEdit({});
