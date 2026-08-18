@@ -11,13 +11,15 @@ export const OS_STATUS_LABEL: Record<OsStatus, string> = {
   em_producao: "Em Produção",
   em_pintura: "Em Pintura",
   pronta: "Pronta",
-  entregue: "Entregue",
+  entregue: "Entregue (não faturado)",
+  faturado_parcialmente: "Faturado Parcialmente",
+  faturado: "Faturado",
   atrasada: "Atrasada",
   cancelada: "Cancelada",
 };
 
 export const OS_STATUS_LIST: OsStatus[] = [
-  "aberta","aguardando_material","em_producao","em_pintura","pronta","entregue","atrasada","cancelada"
+  "aberta","aguardando_material","em_producao","em_pintura","pronta","entregue","faturado_parcialmente","faturado","atrasada","cancelada"
 ];
 
 // Tailwind classes por status (usa tokens semânticos)
@@ -28,6 +30,8 @@ export const OS_STATUS_CLASS: Record<OsStatus, string> = {
   em_pintura: "bg-accent text-accent-foreground border-accent",
   pronta: "bg-success/15 text-success border-success/30",
   entregue: "bg-muted text-muted-foreground border-border",
+  faturado_parcialmente: "bg-warning/15 text-warning-foreground border-warning/40",
+  faturado: "bg-success/15 text-success border-success/30",
   atrasada: "bg-destructive/15 text-destructive border-destructive/30",
   cancelada: "bg-muted text-muted-foreground border-border line-through",
 };
@@ -84,8 +88,35 @@ export function diffDays(a: string | null | undefined, b: string | null | undefi
   return Math.round(ms / 86400000);
 }
 
+// "faturado"/"faturado_parcialmente" vêm DEPOIS de "entregue" (mesma entrega, só
+// que já com nota fiscal lançada) — então pra métricas de "foi entregue?" (prazo
+// de entrega, lead time etc.) os três contam como entregue. Use isso em vez de
+// checar só === "entregue", senão uma O.S. já faturada "some" das métricas de entrega.
+export function foiEntregue(status: OsStatus) {
+  return status === "entregue" || status === "faturado" || status === "faturado_parcialmente";
+}
+
+// Status que tiram a O.S. do "backlog em aberto" (carteira ativa, risco de atraso,
+// próximas entregas etc.) — entregue/faturado/faturado_parcialmente/cancelada já
+// não precisam de ação.
+export function ehStatusFinalizado(status: OsStatus) {
+  return foiEntregue(status) || status === "cancelada";
+}
+
+// Decide o status de faturamento a partir do valor já faturado (soma das notas
+// fiscais) comparado ao valor do contrato (valor_total da O.S.):
+// - nada faturado (0)              -> "entregue" (entregue, não faturado)
+// - faturado < valor do contrato   -> "faturado_parcialmente"
+// - faturado >= valor do contrato  -> "faturado"
+// Usado toda vez que uma nota fiscal é lançada ou removida.
+export function statusPorFaturamento(totalFaturado: number, valorTotal: number): OsStatus {
+  if (totalFaturado <= 0) return "entregue";
+  if (valorTotal > 0 && totalFaturado >= valorTotal) return "faturado";
+  return "faturado_parcialmente";
+}
+
 export function isAtrasada(prev: string | null, real: string | null, status: OsStatus) {
-  if (status === "entregue" || status === "cancelada") return false;
+  if (ehStatusFinalizado(status)) return false;
   if (!prev) return false;
   const today = new Date().toISOString().slice(0,10);
   const compareDate = real ?? today;
