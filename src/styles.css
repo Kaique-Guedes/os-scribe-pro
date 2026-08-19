@@ -158,3 +158,19 @@
 .density-compact table th,
 .density-compact table td { padding-top: 0.375rem; padding-bottom: 0.375rem; }
 .density-compact table th.h-10 { height: 2rem; }
+
+/* Impressão da Ata de Reunião (/reunioes/:id → botão Imprimir/Salvar PDF).
+   Esconde sidebar, header e qualquer coisa marcada "print:hidden", deixando
+   só o card da ata. O navegador cuida da geração do PDF (Ctrl+P → Salvar
+   como PDF) — não precisamos de nenhuma lib de PDF no cliente pra isso. */
+@media print {
+  [data-sidebar], header.sticky {
+    display: none !important;
+  }
+  main {
+    padding: 0 !important;
+  }
+  body {
+    background: white !important;
+  }
+}
