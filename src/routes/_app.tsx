@@ -1,14 +1,14 @@
 import { createFileRoute, Outlet, Link, useNavigate, useRouterState, redirect } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { useSession, useRoles, isOnlyAlmoxarifado } from "@/hooks/use-auth";
+import { useSession, useRoles, isOnlyAlmoxarifado, canEdit } from "@/hooks/use-auth";
 import { ROLE_LABEL } from "@/lib/os-utils";
 import {
   Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel,
   SidebarMenu, SidebarMenuItem, SidebarMenuButton, SidebarProvider, SidebarTrigger,
   SidebarHeader, SidebarFooter,
 } from "@/components/ui/sidebar";
-import { LayoutDashboard, ClipboardList, Users, Upload, Factory, Settings, LogOut } from "lucide-react";
+import { LayoutDashboard, ClipboardList, Users, Upload, Factory, Settings, LogOut, Users2 } from "lucide-react";
 import { SartoriLogo } from "@/components/sartori-logo";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -26,11 +26,14 @@ export const Route = createFileRoute("/_app")({
   component: AppLayout,
 });
 
+// item com "restrito: true" só aparece pra quem canEdit(roles) (admin/pcp) —
+// hoje só a aba Reunião usa isso, ver RLS da tabela "reunioes".
 const NAV = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { to: "/ordens", label: "Ordens de Serviço", icon: ClipboardList },
   { to: "/ordens/nova", label: "Nova O.S. (Upload)", icon: Upload },
   { to: "/producao", label: "Produção", icon: Factory },
+  { to: "/reunioes", label: "Reunião", icon: Users2, restrito: true },
   { to: "/clientes", label: "Clientes", icon: Users },
   { to: "/configuracoes", label: "Configurações", icon: Settings },
 ];
@@ -48,6 +51,7 @@ function AppLayout() {
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const restrictedToAlmoxarifado = isOnlyAlmoxarifado(roles);
+  const podeVerRestrito = canEdit(roles);
 
   useEffect(() => {
     if (!user) return;
@@ -65,9 +69,19 @@ function AppLayout() {
     }
   }, [rolesLoading, restrictedToAlmoxarifado, pathname, navigate]);
 
+  // Guard de UX pra /reunioes (só admin/pcp) — a RLS da tabela "reunioes" já
+  // bloqueia os dados de verdade; isso aqui só evita mostrar a tela vazia/quebrada
+  // pra quem digitar a URL direto sem ter o role.
+  useEffect(() => {
+    if (rolesLoading || restrictedToAlmoxarifado || podeVerRestrito) return;
+    if (pathname.startsWith("/reunioes")) {
+      navigate({ to: "/dashboard", replace: true });
+    }
+  }, [rolesLoading, restrictedToAlmoxarifado, podeVerRestrito, pathname, navigate]);
+
   const visibleNav = restrictedToAlmoxarifado
     ? NAV.filter((item) => item.to === "/producao")
-    : NAV;
+    : NAV.filter((item) => !item.restrito || podeVerRestrito);
 
   async function signOut() {
     await supabase.auth.signOut();
