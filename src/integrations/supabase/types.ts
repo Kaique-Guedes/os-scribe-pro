@@ -631,6 +631,59 @@ export type Database = {
           }
         ];
       };
+      reunioes: {
+        Row: {
+          id: string;
+          tipo: Database["public"]["Enums"]["reuniao_tipo"];
+          os_id: string | null;
+          titulo: string;
+          data_reuniao: string;
+          pauta: string | null;
+          dados_snapshot: Json;
+          participantes: Json;
+          status: Database["public"]["Enums"]["reuniao_status"];
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          tipo: Database["public"]["Enums"]["reuniao_tipo"];
+          os_id?: string | null;
+          titulo: string;
+          data_reuniao?: string;
+          pauta?: string | null;
+          dados_snapshot?: Json;
+          participantes?: Json;
+          status?: Database["public"]["Enums"]["reuniao_status"];
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          tipo?: Database["public"]["Enums"]["reuniao_tipo"];
+          os_id?: string | null;
+          titulo?: string;
+          data_reuniao?: string;
+          pauta?: string | null;
+          dados_snapshot?: Json;
+          participantes?: Json;
+          status?: Database["public"]["Enums"]["reuniao_status"];
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "reunioes_os_id_fkey";
+            columns: ["os_id"];
+            isOneToOne: false;
+            referencedRelation: "ordens_servico";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
     };
     Views: Record<string, never>;
     Functions: {
@@ -666,6 +719,8 @@ export type Database = {
       material_categoria: "longos" | "planos" | "fixadores" | "acessorios" | "consumo";
       conferencia_status: "nao_iniciada" | "em_andamento" | "concluida";
       conferencia_resultado: "ok" | "divergente";
+      reuniao_tipo: "individual" | "geral";
+      reuniao_status: "rascunho" | "finalizada";
     };
     CompositeTypes: Record<string, never>;
   };
