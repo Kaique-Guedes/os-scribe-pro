@@ -2,7 +2,7 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { useSession, useRoles, canEdit } from "@/hooks/use-auth";
+import { useSession, useRoles, canEdit, isAdmin } from "@/hooks/use-auth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,9 +11,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
+import { AlertDialog, AlertDialogTrigger, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction } from "@/components/ui/alert-dialog";
 import { ArrowLeft, Printer, Plus, Trash2, Lock, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
-import { formatDate, OS_STATUS_LABEL } from "@/lib/os-utils";
+import { formatDate, OS_STATUS_LABEL, OS_STATUS_LIST } from "@/lib/os-utils";
 import { resumoMaterial, type OsSnapshotItem, type Participante, type PlanoAcaoItem } from "@/lib/reuniao-utils";
 import { SartoriLogo } from "@/components/sartori-logo";
 
@@ -29,6 +30,7 @@ function ReuniaoDetalhe() {
   const { user } = useSession();
   const { data: roles = [] } = useRoles(user?.id);
   const podeEditar = canEdit(roles);
+  const podeExcluir = isAdmin(roles);
 
   const { data: reuniao, isLoading } = useQuery({
     queryKey: ["reuniao", id],
@@ -72,11 +74,27 @@ function ReuniaoDetalhe() {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  const excluir = useMutation({
+    mutationFn: async () => {
+      const { error } = await supabase.from("reunioes").delete().eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success("Ata excluída.");
+      navigate({ to: "/reunioes" });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   if (isLoading) return <div className="p-6 text-sm text-muted-foreground">Carregando…</div>;
   if (!reuniao) return <div className="p-6 text-sm text-muted-foreground">Ata não encontrada.</div>;
 
   const snapshot = reuniao.dados_snapshot as any;
-  const itens: OsSnapshotItem[] = reuniao.tipo === "individual" ? [snapshot as OsSnapshotItem] : (snapshot?.itens ?? []);
+  const itensBrutos: OsSnapshotItem[] = reuniao.tipo === "individual" ? [snapshot as OsSnapshotItem] : (snapshot?.itens ?? []);
+  // Ata geral: ordena pela sequência natural do fluxo da O.S. (aberta → ... →
+  // faturado), não por número de O.S. — reaproveita OS_STATUS_LIST, que já é
+  // a mesma ordem usada no dashboard/kanban, então fica consistente com o resto do sistema.
+  const itens = [...itensBrutos].sort((a, b) => OS_STATUS_LIST.indexOf(a.status) - OS_STATUS_LIST.indexOf(b.status));
 
   return (
     <div className="p-6 space-y-4 print:p-0">
@@ -94,6 +112,29 @@ function ReuniaoDetalhe() {
                 <CheckCircle2 className="h-4 w-4 mr-2" />Finalizar ata
               </Button>
             </>
+          )}
+          {podeExcluir && (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button size="icon" variant="ghost"><Trash2 className="h-4 w-4 text-destructive" /></Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Excluir "{reuniao.titulo}"?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    {finalizada
+                      ? "Essa ata já foi finalizada. Excluir remove o registro permanentemente, sem volta."
+                      : "Isso remove o rascunho permanentemente."}
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                  <AlertDialogAction onClick={() => excluir.mutate()} className="bg-destructive hover:bg-destructive/90">
+                    Excluir
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           )}
         </div>
       </div>
