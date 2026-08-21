@@ -125,6 +125,8 @@ export type Database = {
           data_faturamento_real: string | null;
           numero_nota_fiscal: string | null;
           nota_fiscal_anexo_id: string | null;
+          pesquisa_satisfacao_enviada_em: string | null;
+          aviso_prazo_enviado_em: string | null;
         };
         Insert: {
           id?: string;
@@ -156,6 +158,8 @@ export type Database = {
           data_faturamento_real?: string | null;
           numero_nota_fiscal?: string | null;
           nota_fiscal_anexo_id?: string | null;
+          pesquisa_satisfacao_enviada_em?: string | null;
+          aviso_prazo_enviado_em?: string | null;
         };
         Update: {
           id?: string;
@@ -187,6 +191,8 @@ export type Database = {
           data_faturamento_real?: string | null;
           numero_nota_fiscal?: string | null;
           nota_fiscal_anexo_id?: string | null;
+          pesquisa_satisfacao_enviada_em?: string | null;
+          aviso_prazo_enviado_em?: string | null;
         };
         Relationships: [
           {
