@@ -58,4 +58,16 @@ export default {
       });
     }
   },
+
+  // Disparado pelo Cloudflare Cron Trigger (Workers > este Worker > Settings >
+  // Triggers > Cron Triggers — cadastrar manualmente, ex: "0 12 * * *" pra
+  // rodar todo dia 12h UTC). Não precisa de wrangler.toml: cron trigger de
+  // Worker configurado pelo dashboard funciona independente do arquivo de
+  // config usado no deploy.
+  async scheduled(_event: unknown, _env: unknown, ctx: { waitUntil: (p: Promise<unknown>) => void }) {
+    const { enviarAvisosPrazoEntrega } = await import("./lib/aviso-prazo.server");
+    ctx.waitUntil(
+      enviarAvisosPrazoEntrega().catch((e) => console.error("[cron] aviso-prazo falhou:", e)),
+    );
+  },
 };

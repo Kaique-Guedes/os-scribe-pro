@@ -46,6 +46,7 @@ import type { TablesUpdate } from "@/integrations/supabase/types";
 import { extractNotaFiscalFromDocument } from "@/lib/nota-fiscal-extract.functions";
 import { extractCotacaoFromDocument, type ExtractedCotacaoItem } from "@/lib/cotacao-extract.functions";
 import { iniciarConferencia, concluirConferencia } from "@/lib/conferencia-material.functions";
+import { enviarPesquisaSatisfacao } from "@/lib/pesquisa-satisfacao.functions";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
 import {
@@ -265,6 +266,7 @@ function OsDetail() {
   const [nfValor, setNfValor] = useState("");
   const [nfNumero, setNfNumero] = useState("");
   const extractNfFn = useServerFn(extractNotaFiscalFromDocument);
+  const enviarPesquisaSatisfacaoFn = useServerFn(enviarPesquisaSatisfacao);
 
   async function onSelecionarNf(file: File) {
     if (file.size > 15 * 1024 * 1024) {
@@ -348,6 +350,16 @@ function OsDetail() {
         .eq("id", id)
         .in("status", ["entregue", "faturado_parcialmente", "faturado"]);
       if (osErr) throw osErr;
+
+      // Faturou o valor total: dispara a pesquisa de satisfação (best-effort —
+      // a função no servidor é idempotente, então não tem problema chamar mesmo
+      // que já tenha sido enviada antes; se o e-mail falhar, não derruba o
+      // salvamento da nota fiscal, que é a ação principal do usuário aqui).
+      if (novoStatus === "faturado") {
+        enviarPesquisaSatisfacaoFn({ data: { osId: id } }).catch((e) =>
+          console.error("[pesquisa-satisfacao] falha ao enviar:", e),
+        );
+      }
     },
     onSuccess: () => {
       toast.success("Nota fiscal anexada.");
