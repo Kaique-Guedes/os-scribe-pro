@@ -433,11 +433,15 @@ export type Database = {
           id: string;
           os_id: string;
           categoria: Database["public"]["Enums"]["material_categoria"];
-          fornecedor: string;
+          descricao: string;
           valor: number;
           prazo_entrega_dias: number | null;
           anexo_id: string | null;
           selecionada: boolean;
+          chegou: boolean;
+          data_chegada: string | null;
+          pedido_compra_anexo_id: string | null;
+          nota_fiscal_compra_anexo_id: string | null;
           observacoes: string | null;
           created_by: string | null;
           created_at: string;
@@ -446,11 +450,15 @@ export type Database = {
           id?: string;
           os_id: string;
           categoria: Database["public"]["Enums"]["material_categoria"];
-          fornecedor: string;
+          descricao: string;
           valor: number;
           prazo_entrega_dias?: number | null;
           anexo_id?: string | null;
           selecionada?: boolean;
+          chegou?: boolean;
+          data_chegada?: string | null;
+          pedido_compra_anexo_id?: string | null;
+          nota_fiscal_compra_anexo_id?: string | null;
           observacoes?: string | null;
           created_by?: string | null;
           created_at?: string;
@@ -459,11 +467,15 @@ export type Database = {
           id?: string;
           os_id?: string;
           categoria?: Database["public"]["Enums"]["material_categoria"];
-          fornecedor?: string;
+          descricao?: string;
           valor?: number;
           prazo_entrega_dias?: number | null;
           anexo_id?: string | null;
           selecionada?: boolean;
+          chegou?: boolean;
+          data_chegada?: string | null;
+          pedido_compra_anexo_id?: string | null;
+          nota_fiscal_compra_anexo_id?: string | null;
           observacoes?: string | null;
           created_by?: string | null;
           created_at?: string;
@@ -479,6 +491,20 @@ export type Database = {
           {
             foreignKeyName: "material_cotacoes_anexo_id_fkey";
             columns: ["anexo_id"];
+            isOneToOne: false;
+            referencedRelation: "os_anexos";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "material_cotacoes_pedido_compra_anexo_id_fkey";
+            columns: ["pedido_compra_anexo_id"];
+            isOneToOne: false;
+            referencedRelation: "os_anexos";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "material_cotacoes_nota_fiscal_compra_anexo_id_fkey";
+            columns: ["nota_fiscal_compra_anexo_id"];
             isOneToOne: false;
             referencedRelation: "os_anexos";
             referencedColumns: ["id"];

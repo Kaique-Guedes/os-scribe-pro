@@ -30,7 +30,7 @@ export const iniciarConferencia = createServerFn({ method: "POST" })
 
     const { data: cotacao, error: cotErr } = await context.supabase
       .from("material_cotacoes")
-      .select("id, os_id, categoria, fornecedor")
+      .select("id, os_id, categoria, descricao")
       .eq("id", data.cotacaoId)
       .single();
     if (cotErr) throw new Error(cotErr.message);
@@ -117,7 +117,7 @@ export const concluirConferencia = createServerFn({ method: "POST" })
         concluido_em: new Date().toISOString(),
       })
       .eq("id", data.conferenciaId)
-      .select("*, material_cotacoes(categoria, fornecedor), ordens_servico(numero_os)")
+      .select("*, material_cotacoes(categoria, descricao), ordens_servico(numero_os)")
       .single();
     if (confErr) throw new Error(confErr.message);
 
@@ -189,7 +189,7 @@ async function enviarEmailConferencia(conferencia: any, itens: z.infer<typeof Co
 
   const numeroOs = conferencia.ordens_servico?.numero_os ?? conferencia.os_id;
   const categoria = conferencia.material_cotacoes?.categoria ?? "";
-  const fornecedor = conferencia.material_cotacoes?.fornecedor ?? "";
+  const descricao = conferencia.material_cotacoes?.descricao ?? "";
   const divergentes = itens.filter((i) => !i.veio_certo);
 
   const assunto =
@@ -203,7 +203,7 @@ async function enviarEmailConferencia(conferencia: any, itens: z.infer<typeof Co
 
   const html = `
     <p>A conferência física de material da <b>O.S. ${numeroOs}</b> foi concluída.</p>
-    <p><b>Categoria:</b> ${categoria}<br/><b>Fornecedor:</b> ${fornecedor}<br/><b>Resultado:</b> ${resultado === "ok" ? "Tudo certo" : "Divergência encontrada"}</p>
+    <p><b>Categoria:</b> ${categoria}<br/><b>Descrição:</b> ${descricao}<br/><b>Resultado:</b> ${resultado === "ok" ? "Tudo certo" : "Divergência encontrada"}</p>
     ${divergentes.length > 0 ? `<p><b>Itens com divergência:</b></p><ul>${linhasDivergentes}</ul>` : ""}
   `;
 

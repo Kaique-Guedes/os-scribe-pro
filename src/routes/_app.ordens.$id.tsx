@@ -67,7 +67,6 @@ import {
   Star,
   Package,
   Printer,
-  ClipboardCheck,
   Sparkles,
 } from "lucide-react";
 import { useSession, useRoles, canEditEtapa, isOnlyAlmoxarifado } from "@/hooks/use-auth";
@@ -189,8 +188,11 @@ function OsDetail() {
   });
 
   const fileRef = useRef<HTMLInputElement>(null);
-  const pedidoCompraFileRef = useRef<HTMLInputElement>(null);
-  const notaFiscalCompraFileRef = useRef<HTMLInputElement>(null);
+  // Um input de arquivo "escondido" por cotação (pedido de compra e nota fiscal),
+  // já que agora cada cotação tem seu próprio par de anexos. Guardamos numa
+  // ref-map (chave = `${cotacaoId}-pedido` ou `${cotacaoId}-nf`) em vez de uma
+  // ref fixa, porque a lista de cotações muda de tamanho dinamicamente.
+  const cotacaoFileRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const uploadAnexo = useMutation({
     mutationFn: async (file: File) => {
       if (!user) throw new Error("Sem sessão");
@@ -547,19 +549,21 @@ function OsDetail() {
     onError: (e: Error) => toast.error(e.message),
   });
 
-  // Upload de anexo já vinculado direto a uma coluna de os_etapas (pedido de compra / NF de compra)
-  const uploadEtapaAnexo = useMutation({
+  // Upload de anexo (pedido de compra / NF de compra) vinculado direto a UMA cotação —
+  // a chegada de material é por cotação (cada fornecedor/descrição chega em momento
+  // e com papelada diferente), então o anexo mora em material_cotacoes, não em os_etapas.
+  const uploadCotacaoAnexo = useMutation({
     mutationFn: async ({
       file,
-      tipo,
+      cotacaoId,
       column,
     }: {
       file: File;
-      tipo: EtapaTipo;
+      cotacaoId: string;
       column: "pedido_compra_anexo_id" | "nota_fiscal_compra_anexo_id";
     }) => {
       if (!user) throw new Error("Sem sessão");
-      const path = `${id}/${Date.now()}-${file.name.replace(/[^\w.-]/g, "_")}`;
+      const path = `${id}/cotacoes/${cotacaoId}/${Date.now()}-${file.name.replace(/[^\w.-]/g, "_")}`;
       const { error: upErr } = await supabase.storage
         .from("os-files")
         .upload(path, file, { contentType: file.type });
@@ -578,17 +582,32 @@ function OsDetail() {
         .single();
       if (insErr) throw insErr;
       const { error: updErr } = await supabase
-        .from("os_etapas")
-        .update({ [column]: anexo.id } as TablesUpdate<"os_etapas">)
-        .eq("os_id", id)
-        .eq("tipo", tipo);
+        .from("material_cotacoes")
+        .update({ [column]: anexo.id } as TablesUpdate<"material_cotacoes">)
+        .eq("id", cotacaoId);
       if (updErr) throw updErr;
     },
     onSuccess: () => {
       toast.success("Anexo vinculado.");
-      qc.invalidateQueries({ queryKey: ["os-etapas", id] });
+      qc.invalidateQueries({ queryKey: ["material-cotacoes", id] });
       qc.invalidateQueries({ queryKey: ["os-anexos", id] });
     },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  // Marca (ou desmarca) que o material de UMA cotação específica chegou.
+  // É esse campo que decide qual cotação libera a conferência física — antes disso
+  // o processo era "por etapa" (a etapa inteira virava uma coisa só); agora cada
+  // cotação segue seu próprio mini-fluxo: chegou → confere → resultado.
+  const marcarChegadaCotacao = useMutation({
+    mutationFn: async ({ cotacaoId, chegou }: { cotacaoId: string; chegou: boolean }) => {
+      const { error } = await supabase
+        .from("material_cotacoes")
+        .update({ chegou, data_chegada: chegou ? new Date().toISOString() : null })
+        .eq("id", cotacaoId);
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["material-cotacoes", id] }),
     onError: (e: Error) => toast.error(e.message),
   });
 
@@ -599,7 +618,7 @@ function OsDetail() {
   const extractCotacaoFn = useServerFn(extractCotacaoFromDocument);
   const [cotacaoForm, setCotacaoForm] = useState<{
     categoria: MaterialCategoria;
-    fornecedor: string;
+    descricao: string;
     valor: string;
     prazo_entrega_dias: string;
     observacoes: string;
@@ -607,7 +626,7 @@ function OsDetail() {
     itens: ExtractedCotacaoItem[];
   }>({
     categoria: "longos",
-    fornecedor: "",
+    descricao: "",
     valor: "",
     prazo_entrega_dias: "",
     observacoes: "",
@@ -667,8 +686,8 @@ function OsDetail() {
   const addCotacao = useMutation({
     mutationFn: async () => {
       if (!user) throw new Error("Sem sessão");
-      if (!cotacaoForm.fornecedor.trim() || !cotacaoForm.valor) {
-        throw new Error("Preencha fornecedor e valor.");
+      if (!cotacaoForm.descricao.trim() || !cotacaoForm.valor) {
+        throw new Error("Preencha descrição e valor.");
       }
       let anexo_id: string | null = null;
       if (cotacaoForm.file) {
@@ -697,7 +716,7 @@ function OsDetail() {
         .insert({
           os_id: id,
           categoria: cotacaoForm.categoria,
-          fornecedor: cotacaoForm.fornecedor.trim(),
+          descricao: cotacaoForm.descricao.trim(),
           valor: Number(cotacaoForm.valor),
           prazo_entrega_dias: cotacaoForm.prazo_entrega_dias ? Number(cotacaoForm.prazo_entrega_dias) : null,
           anexo_id,
@@ -726,7 +745,7 @@ function OsDetail() {
       setShowCotacaoDialog(false);
       setCotacaoForm({
         categoria: "longos",
-        fornecedor: "",
+        descricao: "",
         valor: "",
         prazo_entrega_dias: "",
         observacoes: "",
@@ -834,7 +853,7 @@ function OsDetail() {
     onError: (e: Error) => toast.error(e.message),
   });
 
-  function imprimirChecklist(cotacao: { fornecedor: string; categoria: MaterialCategoria }) {
+  function imprimirChecklist(cotacao: { descricao: string; categoria: MaterialCategoria }) {
     const win = window.open("", "_blank");
     if (!win) {
       toast.error("O navegador bloqueou a janela de impressão.");
@@ -865,7 +884,7 @@ function OsDetail() {
         <body>
           <h1>Checklist de conferência de material — O.S. ${os?.numero_os ?? ""}</h1>
           <p><b>Categoria:</b> ${MATERIAL_CATEGORIA_LABEL[cotacao.categoria]}</p>
-          <p><b>Fornecedor:</b> ${cotacao.fornecedor}</p>
+          <p><b>Descrição:</b> ${cotacao.descricao}</p>
           <p><b>Data:</b> ${new Date().toLocaleDateString("pt-BR")}</p>
           <table>
             <thead><tr><th>Item</th><th>Qtd. pedida</th><th>Veio certo?</th></tr></thead>
@@ -1211,8 +1230,6 @@ function OsDetail() {
                 const e = etapas?.find((x) => x.tipo === tipo);
                 const done = e?.status === "concluido";
                 const editavel = canEditEtapa(roles, tipo);
-                const pedidoCompraAnexo = anexos?.find((a) => a.id === e?.pedido_compra_anexo_id);
-                const notaFiscalCompraAnexo = anexos?.find((a) => a.id === e?.nota_fiscal_compra_anexo_id);
                 const cotacoesDaOs = cotacoes ?? [];
 
                 return (
@@ -1326,7 +1343,7 @@ function OsDetail() {
                                           />
                                         </button>
                                         <div className="flex-1 min-w-0">
-                                          <div className="font-medium truncate">{c.fornecedor}</div>
+                                          <div className="font-medium truncate">{c.descricao}</div>
                                           <div className="text-muted-foreground">
                                             {formatBRL(c.valor)}
                                             {c.prazo_entrega_dias != null && ` · ${c.prazo_entrega_dias}d`}
@@ -1346,89 +1363,125 @@ function OsDetail() {
                         </div>
                       )}
 
-                      {/* Campos extras — só na etapa de chegada de material (almoxarifado) */}
+                      {/* Campos extras — só na etapa de chegada de material (almoxarifado).
+                          Chegada é POR COTAÇÃO: cada cotação selecionada (fechada) vira um
+                          cartãozinho com seu próprio par de anexos, um botão "Marcar como
+                          chegou" e só depois libera "Iniciar conferência" — não dá mais pra
+                          conferir antes de marcar que aquele material chegou. */}
                       {tipo === "chegada_material" && (
                         <div className="space-y-2 pt-1">
-                          <div className="flex items-center justify-between rounded-md border px-2 py-1.5 text-xs">
-                            <span className="flex items-center gap-1 truncate">
-                              <Paperclip className="h-3.5 w-3.5" />
-                              {pedidoCompraAnexo ? pedidoCompraAnexo.nome : "Pedido de compra — sem anexo"}
-                            </span>
-                            {editavel && (
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                className="h-6 px-2"
-                                onClick={() => pedidoCompraFileRef.current?.click()}
-                              >
-                                <Upload className="h-3.5 w-3.5" />
-                              </Button>
-                            )}
-                            <input
-                              ref={pedidoCompraFileRef}
-                              type="file"
-                              className="hidden"
-                              onChange={(ev) => {
-                                const f = ev.target.files?.[0];
-                                if (f) uploadEtapaAnexo.mutate({ file: f, tipo, column: "pedido_compra_anexo_id" });
-                                ev.target.value = "";
-                              }}
-                            />
-                          </div>
-                          <div className="flex items-center justify-between rounded-md border px-2 py-1.5 text-xs">
-                            <span className="flex items-center gap-1 truncate">
-                              <Receipt className="h-3.5 w-3.5" />
-                              {notaFiscalCompraAnexo ? notaFiscalCompraAnexo.nome : "Nota fiscal de compra — sem anexo"}
-                            </span>
-                            {editavel && (
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                className="h-6 px-2"
-                                onClick={() => notaFiscalCompraFileRef.current?.click()}
-                              >
-                                <Upload className="h-3.5 w-3.5" />
-                              </Button>
-                            )}
-                            <input
-                              ref={notaFiscalCompraFileRef}
-                              type="file"
-                              className="hidden"
-                              onChange={(ev) => {
-                                const f = ev.target.files?.[0];
-                                if (f)
-                                  uploadEtapaAnexo.mutate({ file: f, tipo, column: "nota_fiscal_compra_anexo_id" });
-                                ev.target.value = "";
-                              }}
-                            />
-                          </div>
-
-                          <div className="rounded-md border p-2 space-y-2">
-                            <div className="text-xs font-medium flex items-center gap-1">
-                              <ClipboardCheck className="h-3.5 w-3.5" /> Conferência física de material
+                          {cotacoesDaOs.filter((c) => c.selecionada).length === 0 ? (
+                            <div className="text-xs text-muted-foreground rounded-md border px-2 py-1.5">
+                              Nenhuma cotação fechada ainda — marque uma cotação como selecionada na
+                              etapa de solicitação de material pra ela aparecer aqui.
                             </div>
-                            {cotacoesDaOs.filter((c) => c.selecionada).length === 0 ? (
-                              <div className="text-xs text-muted-foreground">
-                                Nenhuma cotação fechada ainda — marque uma cotação como selecionada na etapa
-                                de solicitação de material pra liberar a conferência.
-                              </div>
-                            ) : (
-                              cotacoesDaOs
-                                .filter((c) => c.selecionada)
-                                .map((c) => {
-                                  const conf = conferencias?.find((cf) => cf.cotacao_id === c.id);
-                                  return (
-                                    <div
-                                      key={c.id}
-                                      className="flex items-center justify-between gap-2 text-xs rounded border px-2 py-1.5"
-                                    >
+                          ) : (
+                            cotacoesDaOs
+                              .filter((c) => c.selecionada)
+                              .map((c) => {
+                                const conf = conferencias?.find((cf) => cf.cotacao_id === c.id);
+                                const pedidoAnexo = anexos?.find((a) => a.id === c.pedido_compra_anexo_id);
+                                const nfAnexo = anexos?.find((a) => a.id === c.nota_fiscal_compra_anexo_id);
+                                const refKeyPedido = `${c.id}-pedido`;
+                                const refKeyNf = `${c.id}-nf`;
+                                return (
+                                  <div key={c.id} className="rounded-md border p-2 space-y-1.5">
+                                    <div className="flex items-center justify-between gap-2 text-xs">
+                                      <div className="font-medium truncate">
+                                        {MATERIAL_CATEGORIA_LABEL[c.categoria]} · {c.descricao}
+                                      </div>
+                                      {editavel && (
+                                        <Button
+                                          size="sm"
+                                          variant={c.chegou ? "outline" : "default"}
+                                          className="h-6 px-2 shrink-0"
+                                          onClick={() =>
+                                            marcarChegadaCotacao.mutate({ cotacaoId: c.id, chegou: !c.chegou })
+                                          }
+                                          disabled={marcarChegadaCotacao.isPending}
+                                        >
+                                          {c.chegou ? "Chegou ✓" : "Marcar como chegou"}
+                                        </Button>
+                                      )}
+                                    </div>
+
+                                    <div className="flex items-center justify-between rounded border px-2 py-1 text-xs">
+                                      <span className="flex items-center gap-1 truncate">
+                                        <Paperclip className="h-3.5 w-3.5" />
+                                        {pedidoAnexo ? pedidoAnexo.nome : "Pedido de compra — sem anexo"}
+                                      </span>
+                                      {editavel && (
+                                        <Button
+                                          size="sm"
+                                          variant="ghost"
+                                          className="h-6 px-2"
+                                          onClick={() => cotacaoFileRefs.current[refKeyPedido]?.click()}
+                                        >
+                                          <Upload className="h-3.5 w-3.5" />
+                                        </Button>
+                                      )}
+                                      <input
+                                        ref={(el) => {
+                                          cotacaoFileRefs.current[refKeyPedido] = el;
+                                        }}
+                                        type="file"
+                                        className="hidden"
+                                        onChange={(ev) => {
+                                          const f = ev.target.files?.[0];
+                                          if (f)
+                                            uploadCotacaoAnexo.mutate({
+                                              file: f,
+                                              cotacaoId: c.id,
+                                              column: "pedido_compra_anexo_id",
+                                            });
+                                          ev.target.value = "";
+                                        }}
+                                      />
+                                    </div>
+                                    <div className="flex items-center justify-between rounded border px-2 py-1 text-xs">
+                                      <span className="flex items-center gap-1 truncate">
+                                        <Receipt className="h-3.5 w-3.5" />
+                                        {nfAnexo ? nfAnexo.nome : "Nota fiscal de compra — sem anexo"}
+                                      </span>
+                                      {editavel && (
+                                        <Button
+                                          size="sm"
+                                          variant="ghost"
+                                          className="h-6 px-2"
+                                          onClick={() => cotacaoFileRefs.current[refKeyNf]?.click()}
+                                        >
+                                          <Upload className="h-3.5 w-3.5" />
+                                        </Button>
+                                      )}
+                                      <input
+                                        ref={(el) => {
+                                          cotacaoFileRefs.current[refKeyNf] = el;
+                                        }}
+                                        type="file"
+                                        className="hidden"
+                                        onChange={(ev) => {
+                                          const f = ev.target.files?.[0];
+                                          if (f)
+                                            uploadCotacaoAnexo.mutate({
+                                              file: f,
+                                              cotacaoId: c.id,
+                                              column: "nota_fiscal_compra_anexo_id",
+                                            });
+                                          ev.target.value = "";
+                                        }}
+                                      />
+                                    </div>
+
+                                    <div className="flex items-center justify-between gap-2 text-xs pt-0.5">
                                       <div className="min-w-0">
-                                        <div className="font-medium truncate">
-                                          {MATERIAL_CATEGORIA_LABEL[c.categoria]} · {c.fornecedor}
-                                        </div>
+                                        {!c.chegou && (
+                                          <div className="text-muted-foreground">
+                                            Marque "chegou" pra liberar a conferência.
+                                          </div>
+                                        )}
                                         {conf?.status === "concluida" && (
                                           <div
-                                            className={`flex items-center gap-1 mt-0.5 ${conf.resultado === "ok" ? "text-success" : "text-destructive"}`}
+                                            className={`flex items-center gap-1 ${conf.resultado === "ok" ? "text-success" : "text-destructive"}`}
                                           >
                                             {conf.resultado === "ok" ? (
                                               <CheckCircle2 className="h-3 w-3" />
@@ -1439,10 +1492,10 @@ function OsDetail() {
                                           </div>
                                         )}
                                         {conf?.status === "em_andamento" && (
-                                          <div className="text-muted-foreground mt-0.5">Conferência em andamento</div>
+                                          <div className="text-muted-foreground">Conferência em andamento</div>
                                         )}
                                       </div>
-                                      {editavel && (
+                                      {editavel && c.chegou && (
                                         <div className="flex items-center gap-1 shrink-0">
                                           {!conf && (
                                             <Button
@@ -1479,10 +1532,10 @@ function OsDetail() {
                                         </div>
                                       )}
                                     </div>
-                                  );
-                                })
-                            )}
-                          </div>
+                                  </div>
+                                );
+                              })
+                          )}
                         </div>
                       )}
                     </div>
@@ -1888,11 +1941,11 @@ function OsDetail() {
               </Select>
             </div>
             <div>
-              <Label>Fornecedor</Label>
+              <Label>Descrição</Label>
               <Input
                 className="mt-1"
-                value={cotacaoForm.fornecedor}
-                onChange={(ev) => setCotacaoForm((f) => ({ ...f, fornecedor: ev.target.value }))}
+                value={cotacaoForm.descricao}
+                onChange={(ev) => setCotacaoForm((f) => ({ ...f, descricao: ev.target.value }))}
               />
             </div>
             <div className="grid grid-cols-2 gap-3">
