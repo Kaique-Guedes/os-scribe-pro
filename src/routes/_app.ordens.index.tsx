@@ -9,7 +9,9 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
 import { OS_STATUS_CLASS, OS_STATUS_LABEL, OS_STATUS_LIST, formatBRL, formatDate, isAtrasada, type OsStatus } from "@/lib/os-utils";
-import { Plus, Search, AlertTriangle } from "lucide-react";
+import { Plus, Search, AlertTriangle, List, CalendarDays } from "lucide-react";
+import { useSession, useRoles, canUpdateStages } from "@/hooks/use-auth";
+import { OrdensCalendario, type TipoDataCalendario } from "@/components/ordens-calendario";
 
 // Filtros ficam validados e tipados aqui. Guardar na URL (em vez de useState)
 // é o que faz o filtro sobreviver quando você entra numa O.S. e volta.
@@ -19,6 +21,8 @@ const ordensSearchSchema = z.object({
   cliente: z.string().catch("all"),
   dataDe: z.string().catch(""),
   dataAte: z.string().catch(""),
+  view: z.enum(["lista", "calendario"]).catch("lista"),
+  tipoData: z.enum(["prevista", "real"]).catch("prevista"),
 });
 
 // Reaproveitado por quem navega pra "/ordens" sem vir de um filtro específico
@@ -30,6 +34,8 @@ export const ORDENS_SEARCH_DEFAULTS = {
   cliente: "all",
   dataDe: "",
   dataAte: "",
+  view: "lista" as const,
+  tipoData: "prevista" as const,
 };
 
 export const Route = createFileRoute("/_app/ordens/")({
@@ -46,6 +52,8 @@ function OrdensList() {
     cliente: clienteFilter,
     dataDe,
     dataAte,
+    view,
+    tipoData,
   } = Route.useSearch();
 
   const setSearch = (value: string) =>
@@ -58,6 +66,19 @@ function OrdensList() {
     navigate({ to: "/ordens", search: (prev) => ({ ...prev, dataDe: value }), replace: true });
   const setDataAte = (value: string) =>
     navigate({ to: "/ordens", search: (prev) => ({ ...prev, dataAte: value }), replace: true });
+  const setView = (value: "lista" | "calendario") =>
+    navigate({ to: "/ordens", search: (prev) => ({ ...prev, view: value }), replace: true });
+  const setTipoData = (value: TipoDataCalendario) =>
+    navigate({ to: "/ordens", search: (prev) => ({ ...prev, tipoData: value }), replace: true });
+
+  // canUpdateStages(roles) é a mesma regra que já gate-ia o kanban de Produção
+  // (admin/pcp/producao). Reaproveitar evita ter 2 lugares definindo "quem pode ver isso".
+  const { user } = useSession();
+  const { data: roles = [] } = useRoles(user?.id);
+  const podeVerCalendario = canUpdateStages(roles);
+  // Se o link foi salvo/compartilhado com view=calendario mas o usuário não tem
+  // permissão (ex: perdeu o role depois), cai pra lista em vez de dar tela em branco.
+  const viewAtual = podeVerCalendario ? view : "lista";
 
   const { data: clientes } = useQuery({
     queryKey: ["clientes-simple"],
@@ -96,9 +117,34 @@ function OrdensList() {
           <h1 className="text-2xl font-semibold tracking-tight">Ordens de Serviço</h1>
           <p className="text-sm text-muted-foreground">{filtered.length} de {rows?.length ?? 0} ordens</p>
         </div>
-        <Button asChild><Link to="/ordens/nova"><Plus className="h-4 w-4 mr-2" />Nova O.S.</Link></Button>
+        <div className="flex items-center gap-2">
+          {podeVerCalendario && (
+            <div className="flex items-center rounded-md border p-0.5">
+              <Button
+                variant={viewAtual === "lista" ? "secondary" : "ghost"}
+                size="sm"
+                className="h-8 px-2.5"
+                onClick={() => setView("lista")}
+              >
+                <List className="h-4 w-4 mr-1.5" />Lista
+              </Button>
+              <Button
+                variant={viewAtual === "calendario" ? "secondary" : "ghost"}
+                size="sm"
+                className="h-8 px-2.5"
+                onClick={() => setView("calendario")}
+              >
+                <CalendarDays className="h-4 w-4 mr-1.5" />Calendário
+              </Button>
+            </div>
+          )}
+          <Button asChild><Link to="/ordens/nova"><Plus className="h-4 w-4 mr-2" />Nova O.S.</Link></Button>
+        </div>
       </div>
 
+      {viewAtual === "calendario" ? (
+        <OrdensCalendario rows={filtered} tipoData={tipoData} onTipoDataChange={setTipoData} />
+      ) : (
       <Card>
         <CardHeader className="pb-3">
           <div className="grid gap-3 md:grid-cols-[1fr_180px_200px_150px_150px]">
@@ -189,6 +235,7 @@ function OrdensList() {
           </div>
         </CardContent>
       </Card>
+      )}
     </div>
   );
 }
