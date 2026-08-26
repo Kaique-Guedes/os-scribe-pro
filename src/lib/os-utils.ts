@@ -122,3 +122,77 @@ export function isAtrasada(prev: string | null, real: string | null, status: OsS
   const compareDate = real ?? today;
   return compareDate > prev;
 }
+
+// ---- Entrega parcial (registrada junto com a nota fiscal) ----
+// Uma O.S. pode ter várias notas fiscais; cada uma carrega a quantidade daquela
+// entrega. Este resumo soma tudo que já foi entregue/faturado e calcula o saldo
+// restante, tanto em quantidade quanto em valor — é o que a tela de detalhe da
+// O.S. mostra pro usuário ("quanto falta entregar/faturar").
+export interface ResumoEntregas {
+  quantidadeTotal: number;
+  quantidadeEntregue: number;
+  quantidadeRestante: number;
+  valorTotal: number;
+  valorEntregue: number;
+  valorRestante: number;
+}
+
+export function calcularResumoEntregas(
+  os: { quantidade: number | null; valor_total: number | null },
+  notasFiscais: { quantidade: number | null; valor: number | null }[],
+): ResumoEntregas {
+  const quantidadeTotal = Number(os.quantidade || 0);
+  const valorTotal = Number(os.valor_total || 0);
+  const quantidadeEntregue = notasFiscais.reduce((s, n) => s + Number(n.quantidade || 0), 0);
+  const valorEntregue = notasFiscais.reduce((s, n) => s + Number(n.valor || 0), 0);
+  return {
+    quantidadeTotal,
+    quantidadeEntregue,
+    quantidadeRestante: quantidadeTotal - quantidadeEntregue,
+    valorTotal,
+    valorEntregue,
+    valorRestante: valorTotal - valorEntregue,
+  };
+}
+
+// Valida uma nova entrega ANTES de salvar (regras de negócio: nunca ultrapassar
+// a quantidade total da O.S.; valor só pode ultrapassar o contrato se um admin
+// confirmar explicitamente — ex.: retrabalho ou item extra fora do orçamento).
+export function validarNovaEntrega(
+  resumoAtual: ResumoEntregas,
+  novaQuantidade: number,
+  novoValor: number,
+  permitirExcederValor: boolean,
+): string | null {
+  if (resumoAtual.quantidadeTotal > 0 && novaQuantidade > resumoAtual.quantidadeRestante + 1e-9) {
+    return `Quantidade maior que o saldo restante (${resumoAtual.quantidadeRestante} restante).`;
+  }
+  if (
+    !permitirExcederValor &&
+    resumoAtual.valorTotal > 0 &&
+    novoValor > resumoAtual.valorRestante + 1e-9
+  ) {
+    return `Valor maior que o saldo restante (R$ ${resumoAtual.valorRestante.toFixed(2)}). Marque a opção de exceder se for intencional.`;
+  }
+  return null;
+}
+
+// ---- Entrega planejada (o "Previsto" do dashboard, fatiado por mês) ----
+// Importante: o teto do planejamento é o que AINDA NÃO foi faturado de verdade
+// (resumoAtual.valorRestante, calculado a partir das notas fiscais reais) menos
+// o que já está planejado em outras linhas. Isso é o que evita a duplicidade:
+// assim que uma entrega real (nota fiscal) é lançada, ela abate automaticamente
+// do teto disponível pra planejar as próximas.
+export function validarNovaEntregaPlanejada(
+  resumoAtual: ResumoEntregas,
+  somaOutrasPlanejadas: number,
+  novoValorPlanejado: number,
+  permitirExceder: boolean,
+): string | null {
+  if (permitirExceder || resumoAtual.valorTotal <= 0) return null;
+  const disponivel = resumoAtual.valorRestante - somaOutrasPlanejadas;
+  if (novoValorPlanejado > disponivel + 1e-9) {
+    return `Valor planejado ultrapassa o saldo ainda não faturado (R$ ${disponivel.toFixed(2)} disponível para planejar).`;
+  }
+  return null;
+}

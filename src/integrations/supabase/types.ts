@@ -401,6 +401,8 @@ export type Database = {
           nome_arquivo: string;
           uploaded_by: string | null;
           created_at: string;
+          quantidade: number | null;
+          unidade: string | null;
         };
         Insert: {
           id?: string;
@@ -412,6 +414,8 @@ export type Database = {
           nome_arquivo: string;
           uploaded_by?: string | null;
           created_at?: string;
+          quantidade?: number | null;
+          unidade?: string | null;
         };
         Update: {
           id?: string;
@@ -423,10 +427,53 @@ export type Database = {
           nome_arquivo?: string;
           uploaded_by?: string | null;
           created_at?: string;
+          quantidade?: number | null;
+          unidade?: string | null;
         };
         Relationships: [
           {
             foreignKeyName: "os_notas_fiscais_os_id_fkey";
+            columns: ["os_id"];
+            isOneToOne: false;
+            referencedRelation: "ordens_servico";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
+      os_entregas_planejadas: {
+        Row: {
+          id: string;
+          os_id: string;
+          data_planejada: string;
+          quantidade_planejada: number | null;
+          valor_planejado: number;
+          observacao: string | null;
+          created_by: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          os_id: string;
+          data_planejada: string;
+          quantidade_planejada?: number | null;
+          valor_planejado: number;
+          observacao?: string | null;
+          created_by?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          os_id?: string;
+          data_planejada?: string;
+          quantidade_planejada?: number | null;
+          valor_planejado?: number;
+          observacao?: string | null;
+          created_by?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "os_entregas_planejadas_os_id_fkey";
             columns: ["os_id"];
             isOneToOne: false;
             referencedRelation: "ordens_servico";

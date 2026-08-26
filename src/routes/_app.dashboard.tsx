@@ -117,6 +117,19 @@ function DashboardPage() {
     },
   });
 
+  // Planejamento de entregas parciais (o "Previsto" fatiado por mês, cadastrado
+  // dentro da própria O.S.) — ver card "Planejamento de Entregas" na tela da O.S.
+  const { data: entregasPlanejadasData } = useQuery({
+    queryKey: ["dashboard-entregas-planejadas"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("os_entregas_planejadas")
+        .select("id, os_id, data_planejada, valor_planejado, quantidade_planejada");
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+
   const { data: clientes } = useQuery({
     queryKey: ["clientes-simple"],
     queryFn: async () =>
@@ -197,10 +210,27 @@ function DashboardPage() {
   const entregues = rows.filter((r) => foiEntregue(r.status as OsStatus));
   // Quais O.S. já têm ao menos uma nota fiscal emitida — usado pra marcar
   // "já faturado" na lista de faturamento previsto (item #3 do pedido do usuário).
-  const osIdsComNotaFiscal = useMemo(
-    () => new Set((notasFiscaisData ?? []).map((n) => n.os_id)),
-    [notasFiscaisData],
-  );
+  // Quanto cada O.S. já faturou de verdade (soma das notas fiscais). Usado pra
+  // abater do "Previsto" e não duplicar valor que já virou "Realizado".
+  const valorFaturadoPorOs = useMemo(() => {
+    const map = new Map<string, number>();
+    (notasFiscaisData ?? []).forEach((n) => {
+      map.set(n.os_id, (map.get(n.os_id) || 0) + Number(n.valor || 0));
+    });
+    return map;
+  }, [notasFiscaisData]);
+  // Entregas planejadas de cada O.S. (o Previsto fatiado por mês). Quando a O.S.
+  // não tem nenhuma planejada, o Previsto cai no comportamento antigo (mês da
+  // entrega prevista), mas já descontando o que já foi faturado.
+  const planejadasPorOs = useMemo(() => {
+    const map = new Map<string, NonNullable<typeof entregasPlanejadasData>>();
+    (entregasPlanejadasData ?? []).forEach((e) => {
+      const list = map.get(e.os_id) ?? [];
+      list.push(e);
+      map.set(e.os_id, list);
+    });
+    return map;
+  }, [entregasPlanejadasData]);
   // Card "Entregues" do topo mostra só o mês de referência (mês escolhido no
   // filtro, ou mês atual se nenhum período foi selecionado) — não o histórico todo.
   const mesReferenciaTopo = periodo !== "todos" ? periodo : today.slice(0, 7);
@@ -356,8 +386,54 @@ function DashboardPage() {
       const previstasNoMes = rowsBase.filter((r) => r.data_entrega_prev?.slice(0, 7) === mes);
       const realizadasNoMes = rowsBase.filter((r) => r.data_entrega_real?.slice(0, 7) === mes);
       const notasNoMes = (notasBase ?? []).filter((n) => n.data_emissao?.slice(0, 7) === mes);
-      const faturamentoPrevisto = previstasNoMes.reduce((s, r) => s + Number(r.valor_total || 0), 0);
       const faturamentoRealizado = notasNoMes.reduce((s, n) => s + Number(n.valor || 0), 0);
+
+      // Previsto: se a O.S. tem entregas planejadas cadastradas, usa só o que
+      // foi planejado pra ESTE mês (fatiado). Se não tem planejamento nenhum,
+      // cai no comportamento antigo (valor total no mês da entrega prevista),
+      // mas SEMPRE descontando o que já foi faturado de verdade — sem isso, um
+      // valor que já apareceu como "Realizado" ficaria contado de novo aqui.
+      type ItemPrevisto = {
+        osId: string;
+        numero_os: string | number;
+        clienteNome: string | null;
+        data: string | null;
+        valor: number;
+        origem: "planejado" | "estimado";
+      };
+      const itensPrevisto: ItemPrevisto[] = [];
+      rowsBase.forEach((r) => {
+        const planejadas = planejadasPorOs.get(r.id);
+        if (planejadas && planejadas.length > 0) {
+          planejadas
+            .filter((p) => p.data_planejada?.slice(0, 7) === mes)
+            .forEach((p) => {
+              itensPrevisto.push({
+                osId: r.id,
+                numero_os: r.numero_os,
+                clienteNome: r.clientes?.nome ?? null,
+                data: p.data_planejada,
+                valor: Number(p.valor_planejado || 0),
+                origem: "planejado",
+              });
+            });
+        } else if (r.data_entrega_prev?.slice(0, 7) === mes) {
+          const jaFaturado = valorFaturadoPorOs.get(r.id) || 0;
+          const valor = Math.max(0, Number(r.valor_total || 0) - jaFaturado);
+          if (valor > 0) {
+            itensPrevisto.push({
+              osId: r.id,
+              numero_os: r.numero_os,
+              clienteNome: r.clientes?.nome ?? null,
+              data: r.data_entrega_prev,
+              valor,
+              origem: "estimado",
+            });
+          }
+        }
+      });
+      const faturamentoPrevisto = itensPrevisto.reduce((s, i) => s + i.valor, 0);
+
       return {
         entregasPrevistas: previstasNoMes.length,
         entregasRealizadas: realizadasNoMes.length,
@@ -366,9 +442,10 @@ function DashboardPage() {
         previstasNoMes,
         realizadasNoMes,
         notasNoMes,
+        itensPrevisto,
       };
     },
-    [],
+    [planejadasPorOs, valorFaturadoPorOs],
   );
 
   const comparativoMes = calcularComparativo(rowsPorCliente, notasPorCliente, mesReferencia);
@@ -582,7 +659,7 @@ function DashboardPage() {
               </div>
               <div className="max-h-72 overflow-y-auto">
                 <Table>
-                  {(detalheAberto === "previstas" || detalheAberto === "fatPrevisto") && (
+                  {detalheAberto === "previstas" && (
                     <>
                       <TableHeader>
                         <TableRow>
@@ -596,7 +673,6 @@ function DashboardPage() {
                       <TableBody>
                         {comparativoMes.previstasNoMes.map((r) => {
                           const jaEntregue = foiEntregue(r.status as OsStatus);
-                          const jaFaturado = osIdsComNotaFiscal.has(r.id);
                           return (
                             <TableRow key={r.id}>
                               <TableCell>
@@ -616,24 +692,14 @@ function DashboardPage() {
                                 {formatBRL(r.valor_total)}
                               </TableCell>
                               <TableCell>
-                                {detalheAberto === "previstas" &&
-                                  (jaEntregue ? (
-                                    <Badge variant="outline" className="text-success border-success/40 bg-success/10">
-                                      <CheckCircle2 className="h-3 w-3 mr-1" />
-                                      Entregue
-                                    </Badge>
-                                  ) : (
-                                    <span className="text-xs text-muted-foreground">Pendente</span>
-                                  ))}
-                                {detalheAberto === "fatPrevisto" &&
-                                  (jaFaturado ? (
-                                    <Badge variant="outline" className="text-success border-success/40 bg-success/10">
-                                      <Receipt className="h-3 w-3 mr-1" />
-                                      Faturado
-                                    </Badge>
-                                  ) : (
-                                    <span className="text-xs text-muted-foreground">Não faturado</span>
-                                  ))}
+                                {jaEntregue ? (
+                                  <Badge variant="outline" className="text-success border-success/40 bg-success/10">
+                                    <CheckCircle2 className="h-3 w-3 mr-1" />
+                                    Entregue
+                                  </Badge>
+                                ) : (
+                                  <span className="text-xs text-muted-foreground">Pendente</span>
+                                )}
                               </TableCell>
                             </TableRow>
                           );
@@ -645,6 +711,61 @@ function DashboardPage() {
                               className="text-center text-sm text-muted-foreground py-6"
                             >
                               Nenhuma O.S. com entrega prevista neste mês.
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </TableBody>
+                    </>
+                  )}
+
+                  {detalheAberto === "fatPrevisto" && (
+                    <>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>O.S.</TableHead>
+                          <TableHead>Cliente</TableHead>
+                          <TableHead>Data</TableHead>
+                          <TableHead className="text-right">Valor</TableHead>
+                          <TableHead>Origem</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {comparativoMes.itensPrevisto.map((item, idx) => (
+                          <TableRow key={`${item.osId}-${idx}`}>
+                            <TableCell>
+                              <Link
+                                to="/ordens/$id"
+                                params={{ id: item.osId }}
+                                className="font-medium hover:underline"
+                              >
+                                {item.numero_os}
+                              </Link>
+                            </TableCell>
+                            <TableCell className="text-muted-foreground">
+                              {item.clienteNome ?? "—"}
+                            </TableCell>
+                            <TableCell>{formatDate(item.data)}</TableCell>
+                            <TableCell className="text-right">{formatBRL(item.valor)}</TableCell>
+                            <TableCell>
+                              {item.origem === "planejado" ? (
+                                <Badge variant="outline" className="text-info border-info/40 bg-info/10">
+                                  Planejado
+                                </Badge>
+                              ) : (
+                                <span className="text-xs text-muted-foreground" title="Sem planejamento cadastrado — estimado a partir do saldo restante da O.S.">
+                                  Estimado (saldo)
+                                </span>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                        {comparativoMes.itensPrevisto.length === 0 && (
+                          <TableRow>
+                            <TableCell
+                              colSpan={5}
+                              className="text-center text-sm text-muted-foreground py-6"
+                            >
+                              Nenhum valor previsto pra este mês.
                             </TableCell>
                           </TableRow>
                         )}

@@ -37,6 +37,9 @@ import {
   isAtrasada,
   diffDays,
   statusPorFaturamento,
+  calcularResumoEntregas,
+  validarNovaEntrega,
+  validarNovaEntregaPlanejada,
   type OsStatus,
   type EtapaTipo,
   type MaterialCategoria,
@@ -69,8 +72,9 @@ import {
   Package,
   Printer,
   Sparkles,
+  CalendarClock,
 } from "lucide-react";
-import { useSession, useRoles, canEditEtapa, isOnlyAlmoxarifado } from "@/hooks/use-auth";
+import { useSession, useRoles, canEditEtapa, isOnlyAlmoxarifado, isAdmin, canUpdateStages } from "@/hooks/use-auth";
 
 export const Route = createFileRoute("/_app/ordens/$id")({
   head: () => ({ meta: [{ title: "O.S. — Sartori Group" }] }),
@@ -244,6 +248,87 @@ function OsDetail() {
     a.click();
   }
 
+  // ---- Entregas planejadas: o "Previsto" fatiado por mês (separado da nota fiscal real) ----
+  const { data: entregasPlanejadas } = useQuery({
+    queryKey: ["os-entregas-planejadas", id],
+    queryFn: async () =>
+      (
+        await supabase
+          .from("os_entregas_planejadas")
+          .select("*")
+          .eq("os_id", id)
+          .order("data_planejada", { ascending: true })
+      ).data ?? [],
+  });
+
+  const [epFormAberto, setEpFormAberto] = useState(false);
+  const [epData, setEpData] = useState("");
+  const [epQuantidade, setEpQuantidade] = useState("");
+  const [epValor, setEpValor] = useState("");
+  const [epObservacao, setEpObservacao] = useState("");
+  const [epPermitirExceder, setEpPermitirExceder] = useState(false);
+
+  function cancelarEp() {
+    setEpFormAberto(false);
+    setEpData("");
+    setEpQuantidade("");
+    setEpValor("");
+    setEpObservacao("");
+    setEpPermitirExceder(false);
+  }
+
+  const somaPlanejadaAtual = (entregasPlanejadas ?? []).reduce(
+    (s, e) => s + Number(e.valor_planejado || 0),
+    0,
+  );
+
+  const salvarEp = useMutation({
+    mutationFn: async () => {
+      if (!epData) throw new Error("Informe a data planejada.");
+      const valorNum = parseFloat(epValor.replace(",", "."));
+      if (!valorNum || Number.isNaN(valorNum)) throw new Error("Informe um valor válido.");
+      const quantidadeNum = epQuantidade ? parseFloat(epQuantidade.replace(",", ".")) : null;
+
+      const erro = validarNovaEntregaPlanejada(
+        resumoEntregas,
+        somaPlanejadaAtual,
+        valorNum,
+        epPermitirExceder,
+      );
+      if (erro) throw new Error(erro);
+
+      const { error } = await supabase.from("os_entregas_planejadas").insert({
+        os_id: id,
+        data_planejada: epData,
+        quantidade_planejada: quantidadeNum,
+        valor_planejado: valorNum,
+        observacao: epObservacao || null,
+        created_by: user?.id ?? null,
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success("Entrega planejada.");
+      qc.invalidateQueries({ queryKey: ["os-entregas-planejadas", id] });
+      qc.invalidateQueries({ queryKey: ["dashboard-entregas-planejadas"] });
+      cancelarEp();
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const removerEp = useMutation({
+    mutationFn: async (epId: string) => {
+      const { error } = await supabase.from("os_entregas_planejadas").delete().eq("id", epId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success("Planejamento removido.");
+      qc.invalidateQueries({ queryKey: ["os-entregas-planejadas", id] });
+      qc.invalidateQueries({ queryKey: ["dashboard-entregas-planejadas"] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   // ---- Notas Fiscais: uma O.S. pode ter várias (faturamento parcial/múltiplo) ----
   const { data: notasFiscais } = useQuery({
     queryKey: ["os-notas-fiscais", id],
@@ -265,6 +350,9 @@ function OsDetail() {
   const [nfData, setNfData] = useState("");
   const [nfValor, setNfValor] = useState("");
   const [nfNumero, setNfNumero] = useState("");
+  const [nfQuantidade, setNfQuantidade] = useState("");
+  const [nfUnidade, setNfUnidade] = useState("");
+  const [nfPermitirExcederValor, setNfPermitirExcederValor] = useState(false);
   const extractNfFn = useServerFn(extractNotaFiscalFromDocument);
   const enviarPesquisaSatisfacaoFn = useServerFn(enviarPesquisaSatisfacao);
 
@@ -276,6 +364,7 @@ function OsDetail() {
     setNfArquivo(file);
     setNfFormAberto(true);
     setNfProcessando(true);
+    setNfUnidade(os?.unidade ?? "");
     try {
       const buf = await file.arrayBuffer();
       let binary = "";
@@ -309,8 +398,28 @@ function OsDetail() {
     setNfData("");
     setNfValor("");
     setNfNumero("");
+    setNfQuantidade("");
+    setNfUnidade("");
+    setNfPermitirExcederValor(false);
     setNfExtraiuAlgo(true);
     if (nfFileRef.current) nfFileRef.current.value = "";
+  }
+
+  // Resumo de entregas: quanto já foi entregue/faturado vs. o total da O.S.
+  // Recalcula sozinho toda vez que a lista de notas fiscais muda.
+  const resumoEntregas = calcularResumoEntregas(
+    { quantidade: os?.quantidade ?? null, valor_total: os?.valor_total ?? null },
+    notasFiscais ?? [],
+  );
+
+  function calcularValorSugerido() {
+    const qtd = parseFloat(nfQuantidade.replace(",", "."));
+    const valorUnit = Number(os?.valor_unit || 0);
+    if (!qtd || Number.isNaN(qtd) || !valorUnit) {
+      toast.warning("Informe a quantidade e confira se a O.S. tem preço unitário cadastrado.");
+      return;
+    }
+    setNfValor(String((qtd * valorUnit).toFixed(2)));
   }
 
   const salvarNf = useMutation({
@@ -319,6 +428,21 @@ function OsDetail() {
       if (!nfData) throw new Error("Informe a data de emissão.");
       const valorNum = parseFloat(nfValor.replace(",", "."));
       if (!valorNum || Number.isNaN(valorNum)) throw new Error("Informe um valor válido.");
+      const quantidadeNum = nfQuantidade ? parseFloat(nfQuantidade.replace(",", ".")) : null;
+      if (nfQuantidade && (quantidadeNum == null || Number.isNaN(quantidadeNum) || quantidadeNum <= 0)) {
+        throw new Error("Quantidade inválida.");
+      }
+
+      // Regra de negócio: não deixa entregar/faturar mais do que o saldo restante
+      // da O.S. Quantidade nunca pode passar do saldo; valor só passa se um admin
+      // marcar "permitir exceder" (ex.: retrabalho fora do orçamento original).
+      const erroValidacao = validarNovaEntrega(
+        resumoEntregas,
+        quantidadeNum ?? 0,
+        valorNum,
+        nfPermitirExcederValor,
+      );
+      if (erroValidacao) throw new Error(erroValidacao);
 
       const path = `${id}/nf-${Date.now()}-${nfArquivo.name.replace(/[^\w.-]/g, "_")}`;
       const { error: upErr } = await supabase.storage
@@ -334,6 +458,8 @@ function OsDetail() {
         storage_path: path,
         nome_arquivo: nfArquivo.name,
         uploaded_by: user.id,
+        quantidade: quantidadeNum,
+        unidade: nfUnidade || null,
       });
       if (nfErr) throw nfErr;
 
@@ -1601,6 +1727,247 @@ function OsDetail() {
           )}
 
           {!restrito && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base flex items-center gap-2">
+                <CalendarClock className="h-4 w-4" />
+                Planejamento de entregas (Previsto)
+              </CardTitle>
+              <CardDescription>
+                Programe quando e quanto pretende entregar/faturar — isso alimenta o "Previsto" do
+                dashboard, mês a mês.
+                {resumoEntregas.valorTotal > 0 && (
+                  <>
+                    {" "}
+                    Ainda pode planejar até{" "}
+                    <b className="text-foreground">
+                      {formatBRL(resumoEntregas.valorRestante - somaPlanejadaAtual)}
+                    </b>{" "}
+                    (saldo não faturado, descontado o que já foi planejado).
+                  </>
+                )}
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {entregasPlanejadas && entregasPlanejadas.length > 0 && (
+                <ul className="space-y-2">
+                  {entregasPlanejadas.map((ep) => (
+                    <li
+                      key={ep.id}
+                      className="flex items-center justify-between gap-2 text-sm border rounded-md p-2"
+                    >
+                      <div className="min-w-0">
+                        <div>{formatDate(ep.data_planejada)} · {formatBRL(ep.valor_planejado)}</div>
+                        <div className="text-xs text-muted-foreground truncate">
+                          {ep.quantidade_planejada != null && <>{ep.quantidade_planejada} un. · </>}
+                          {ep.observacao || "sem observação"}
+                        </div>
+                      </div>
+                      {canUpdateStages(roles) && (
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="shrink-0 h-8 w-8"
+                          onClick={() => removerEp.mutate(ep.id)}
+                        >
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {epFormAberto ? (
+                <div className="space-y-2 border rounded-md p-3">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <Label className="text-xs">Data planejada</Label>
+                      <Input type="date" value={epData} onChange={(e) => setEpData(e.target.value)} />
+                    </div>
+                    <div>
+                      <Label className="text-xs">Quantidade (opcional)</Label>
+                      <Input
+                        type="text"
+                        inputMode="decimal"
+                        placeholder="0"
+                        value={epQuantidade}
+                        onChange={(e) => setEpQuantidade(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <Label className="text-xs">Valor planejado (R$)</Label>
+                    <Input
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="0,00"
+                      value={epValor}
+                      onChange={(e) => setEpValor(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Observação (opcional)</Label>
+                    <Input
+                      type="text"
+                      value={epObservacao}
+                      onChange={(e) => setEpObservacao(e.target.value)}
+                    />
+                  </div>
+                  {isAdmin(roles) && (
+                    <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <input
+                        type="checkbox"
+                        checked={epPermitirExceder}
+                        onChange={(e) => setEpPermitirExceder(e.target.checked)}
+                      />
+                      Permitir planejar além do saldo não faturado
+                    </label>
+                  )}
+                  <div className="flex gap-2">
+                    <Button size="sm" onClick={() => salvarEp.mutate()} disabled={salvarEp.isPending}>
+                      Salvar planejamento
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={cancelarEp}>
+                      Cancelar
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                canUpdateStages(roles) && (
+                  <Button size="sm" variant="outline" onClick={() => setEpFormAberto(true)}>
+                    <Plus className="h-4 w-4 mr-1" /> Planejar entrega parcial
+                  </Button>
+                )
+              )}
+            </CardContent>
+          </Card>
+          )}
+
+          {!restrito && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base flex items-center gap-2">
+                <CalendarClock className="h-4 w-4" />
+                Planejamento de entregas (Previsto)
+              </CardTitle>
+              <CardDescription>
+                Programe aqui as entregas parciais que você espera fazer, mês a mês — isso é o
+                que alimenta o "Previsto" do dashboard. Quando a entrega acontecer de verdade,
+                registre a nota fiscal no card abaixo — isso é o "Realizado".
+                {entregasPlanejadas && entregasPlanejadas.length > 0 && (
+                  <>
+                    {" "}
+                    Planejado até agora:{" "}
+                    <b className="text-foreground">{formatBRL(somaPlanejadaAtual)}</b>.
+                  </>
+                )}
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {(entregasPlanejadas ?? []).map((ep) => (
+                <div key={ep.id} className="flex items-start justify-between gap-2 border rounded-md p-2">
+                  <div className="text-sm">
+                    <div className="font-medium">{formatBRL(ep.valor_planejado)}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {formatDate(ep.data_planejada)}
+                      {ep.quantidade_planejada != null && <> · {ep.quantidade_planejada}</>}
+                      {ep.observacao && <> · {ep.observacao}</>}
+                    </div>
+                  </div>
+                  {canUpdateStages(roles) && (
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      className="h-7 w-7 shrink-0"
+                      onClick={() => removerEp.mutate(ep.id)}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  )}
+                </div>
+              ))}
+
+              {canUpdateStages(roles) && !epFormAberto && (
+                <Button type="button" size="sm" variant="outline" onClick={() => setEpFormAberto(true)}>
+                  <Plus className="h-3.5 w-3.5 mr-1" /> Planejar entrega
+                </Button>
+              )}
+
+              {epFormAberto && (
+                <div className="space-y-2 border rounded-md p-3">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <Label className="text-xs">Data planejada</Label>
+                      <Input type="date" value={epData} onChange={(e) => setEpData(e.target.value)} />
+                    </div>
+                    <div>
+                      <Label className="text-xs">Quantidade (opcional)</Label>
+                      <Input
+                        type="text"
+                        inputMode="decimal"
+                        placeholder="0"
+                        value={epQuantidade}
+                        onChange={(e) => setEpQuantidade(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <Label className="text-xs">
+                      Valor planejado (R$)
+                      {resumoEntregas.valorTotal > 0 && (
+                        <span className="text-muted-foreground font-normal">
+                          {" "}
+                          (disponível p/ planejar: {formatBRL(resumoEntregas.valorRestante - somaPlanejadaAtual)})
+                        </span>
+                      )}
+                    </Label>
+                    <Input
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="0,00"
+                      value={epValor}
+                      onChange={(e) => setEpValor(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Observação (opcional)</Label>
+                    <Input
+                      type="text"
+                      value={epObservacao}
+                      onChange={(e) => setEpObservacao(e.target.value)}
+                    />
+                  </div>
+                  {isAdmin(roles) && (
+                    <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <input
+                        type="checkbox"
+                        checked={epPermitirExceder}
+                        onChange={(e) => setEpPermitirExceder(e.target.checked)}
+                      />
+                      Permitir planejar além do saldo ainda não faturado
+                    </label>
+                  )}
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => salvarEp.mutate()}
+                      disabled={salvarEp.isPending}
+                    >
+                      {salvarEp.isPending ? "Salvando..." : "Salvar"}
+                    </Button>
+                    <Button type="button" size="sm" variant="ghost" onClick={cancelarEp}>
+                      Cancelar
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+          )}
+
+          {!restrito && (
           <Card
             className={notasFiscais && notasFiscais.length > 0 ? "border-success/40" : undefined}
           >
@@ -1623,6 +1990,31 @@ function OsDetail() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
+              {(resumoEntregas.quantidadeTotal > 0 || resumoEntregas.valorTotal > 0) && (
+                <div className="grid grid-cols-2 gap-2 text-xs bg-muted/40 rounded-md p-2">
+                  {resumoEntregas.quantidadeTotal > 0 && (
+                    <div>
+                      <span className="text-muted-foreground">Quantidade: </span>
+                      <b>{resumoEntregas.quantidadeEntregue}</b> / {resumoEntregas.quantidadeTotal}
+                      <span className="text-muted-foreground">
+                        {" "}
+                        (restam {resumoEntregas.quantidadeRestante})
+                      </span>
+                    </div>
+                  )}
+                  {resumoEntregas.valorTotal > 0 && (
+                    <div>
+                      <span className="text-muted-foreground">Valor: </span>
+                      <b>{formatBRL(resumoEntregas.valorEntregue)}</b> /{" "}
+                      {formatBRL(resumoEntregas.valorTotal)}
+                      <span className="text-muted-foreground">
+                        {" "}
+                        (restam {formatBRL(resumoEntregas.valorRestante)})
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
               {notasFiscais && notasFiscais.length > 0 && (
                 <ul className="space-y-2">
                   {notasFiscais.map((nf) => (
@@ -1644,6 +2036,9 @@ function OsDetail() {
                         </div>
                         <div className="text-xs text-muted-foreground mt-0.5">
                           {formatDate(nf.data_emissao)} · {formatBRL(nf.valor)}
+                          {nf.quantidade != null && (
+                            <> · {nf.quantidade} {nf.unidade ?? ""}</>
+                          )}
                         </div>
                       </button>
                       <Button
@@ -1728,7 +2123,7 @@ function OsDetail() {
                       </p>
                       <div className="grid grid-cols-2 gap-2">
                         <div>
-                          <Label className="text-xs">Data de emissão</Label>
+                          <Label className="text-xs">Data de emissão (= data da entrega)</Label>
                           <Input
                             type="date"
                             value={nfData}
@@ -1736,7 +2131,54 @@ function OsDetail() {
                           />
                         </div>
                         <div>
-                          <Label className="text-xs">Valor total (R$)</Label>
+                          <Label className="text-xs">Número da NF (opcional)</Label>
+                          <Input
+                            type="text"
+                            value={nfNumero}
+                            onChange={(e) => setNfNumero(e.target.value)}
+                          />
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <Label className="text-xs">
+                            Quantidade entregue
+                            {resumoEntregas.quantidadeTotal > 0 && (
+                              <span className="text-muted-foreground font-normal">
+                                {" "}
+                                (saldo: {resumoEntregas.quantidadeRestante})
+                              </span>
+                            )}
+                          </Label>
+                          <Input
+                            type="text"
+                            inputMode="decimal"
+                            placeholder="0"
+                            value={nfQuantidade}
+                            onChange={(e) => setNfQuantidade(e.target.value)}
+                          />
+                        </div>
+                        <div>
+                          <Label className="text-xs">Unidade</Label>
+                          <Input
+                            type="text"
+                            placeholder="pç, kg, m..."
+                            value={nfUnidade}
+                            onChange={(e) => setNfUnidade(e.target.value)}
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <Label className="text-xs">
+                          Valor desta entrega (R$)
+                          {resumoEntregas.valorTotal > 0 && (
+                            <span className="text-muted-foreground font-normal">
+                              {" "}
+                              (saldo: {formatBRL(resumoEntregas.valorRestante)})
+                            </span>
+                          )}
+                        </Label>
+                        <div className="flex gap-1.5">
                           <Input
                             type="text"
                             inputMode="decimal"
@@ -1744,16 +2186,32 @@ function OsDetail() {
                             value={nfValor}
                             onChange={(e) => setNfValor(e.target.value)}
                           />
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="shrink-0"
+                            onClick={calcularValorSugerido}
+                            title="Calcular a partir da quantidade × preço unitário da O.S."
+                          >
+                            Calcular
+                          </Button>
                         </div>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          "Calcular" usa quantidade × preço unitário da O.S. — o valor final pode ser
+                          editado manualmente se for diferente do calculado.
+                        </p>
                       </div>
-                      <div>
-                        <Label className="text-xs">Número da NF (opcional)</Label>
-                        <Input
-                          type="text"
-                          value={nfNumero}
-                          onChange={(e) => setNfNumero(e.target.value)}
-                        />
-                      </div>
+                      {isAdmin(roles) && (
+                        <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                          <input
+                            type="checkbox"
+                            checked={nfPermitirExcederValor}
+                            onChange={(e) => setNfPermitirExcederValor(e.target.checked)}
+                          />
+                          Permitir que o valor ultrapasse o saldo restante da O.S.
+                        </label>
+                      )}
                       <div className="flex gap-2">
                         <Button
                           size="sm"
