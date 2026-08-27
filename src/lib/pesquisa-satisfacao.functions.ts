@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { escapeHtml } from "@/lib/html-utils";
 import { z } from "zod";
 
 // Lista fixa de e-mails internos (Sartori) que também recebem a pesquisa,
@@ -51,7 +52,7 @@ export const enviarPesquisaSatisfacao = createServerFn({ method: "POST" })
       <p>Prezado(a),</p>
       <p>Estamos enviando uma pesquisa de satisfação ao cliente. Por favor responda.</p>
       <p>É muito importante para nós o retorno do nosso cliente.</p>
-      <p>Pedido: <b>${numeroPedido}</b> — Ele pode ser respondido através do link:
+      <p>Pedido: <b>${escapeHtml(numeroPedido)}</b> — Ele pode ser respondido através do link:
         <a href="${LINK_PESQUISA}">${LINK_PESQUISA}</a></p>
       <p>Ou pelo QR Code:</p>
       <img src="https://flowguedes.com.br/pesquisa-satisfacao-qrcode.png" alt="QR Code da pesquisa de satisfação" width="220" />
