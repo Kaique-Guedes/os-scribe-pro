@@ -1,7 +1,7 @@
 import { createFileRoute, Outlet, Link, useNavigate, useRouterState, redirect } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { useSession, useRoles, isOnlyAlmoxarifado, canEdit } from "@/hooks/use-auth";
+import { useSession, useRoles, isOnlyAlmoxarifado, canEdit, canViewClientes } from "@/hooks/use-auth";
 import { ROLE_LABEL } from "@/lib/os-utils";
 import {
   Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel,
@@ -34,7 +34,7 @@ const NAV = [
   { to: "/ordens/nova", label: "Nova O.S. (Upload)", icon: Upload },
   { to: "/producao", label: "Produção", icon: Factory },
   { to: "/reunioes", label: "Reunião", icon: Users2, restrito: true },
-  { to: "/clientes", label: "Clientes", icon: Users },
+  { to: "/clientes", label: "Clientes", icon: Users, restrito: true, check: canViewClientes },
   { to: "/configuracoes", label: "Configurações", icon: Settings },
 ];
 
@@ -79,9 +79,20 @@ function AppLayout() {
     }
   }, [rolesLoading, restrictedToAlmoxarifado, podeVerRestrito, pathname, navigate]);
 
+  // Guard de UX pra /clientes (admin/pcp/producao) — a RLS da tabela "clientes"
+  // já nega a leitura de verdade pra viewer/almoxarifado; isso aqui só evita
+  // mostrar uma lista vazia/quebrada pra quem digitar a URL direto sem o role.
+  const podeVerClientes = canViewClientes(roles);
+  useEffect(() => {
+    if (rolesLoading || restrictedToAlmoxarifado || podeVerClientes) return;
+    if (pathname.startsWith("/clientes")) {
+      navigate({ to: "/dashboard", replace: true });
+    }
+  }, [rolesLoading, restrictedToAlmoxarifado, podeVerClientes, pathname, navigate]);
+
   const visibleNav = restrictedToAlmoxarifado
     ? NAV.filter((item) => item.to === "/producao")
-    : NAV.filter((item) => !item.restrito || podeVerRestrito);
+    : NAV.filter((item) => !item.restrito || (item.check ? item.check(roles) : podeVerRestrito));
 
   async function signOut() {
     await supabase.auth.signOut();
