@@ -37,6 +37,12 @@ export function useRoles(userId: string | undefined) {
 export function canEdit(roles: AppRole[]) {
   return roles.some((r) => r === "admin" || r === "pcp");
 }
+// Espelha a policy "clientes select" do banco (RLS) — só pra UI (esconder nav/
+// redirecionar). A RLS é a fonte de verdade real: mesmo se alguém burlar essa
+// checagem client-side, o Supabase nega a leitura de qualquer forma.
+export function canViewClientes(roles: AppRole[]) {
+  return roles.some((r) => r === "admin" || r === "pcp" || r === "producao");
+}
 export function canUpdateStages(roles: AppRole[]) {
   return roles.some((r) => r === "admin" || r === "pcp" || r === "producao");
 }
