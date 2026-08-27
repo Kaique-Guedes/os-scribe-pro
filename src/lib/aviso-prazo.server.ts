@@ -3,6 +3,7 @@
 // próprio Worker que dispara sozinho, no horário configurado.
 
 import { emailsPorRoles, enviarEmail } from "@/lib/email.server";
+import { escapeHtml } from "@/lib/html-utils";
 
 function hojeMaisSete(): string {
   const d = new Date();
@@ -32,7 +33,7 @@ export async function enviarAvisosPrazoEntrega() {
   const linhas = os
     .map(
       (o) =>
-        `<li><b>O.S. ${o.numero_os}</b> — Cliente: ${o.clientes?.nome ?? "—"} — Pedido: ${o.numero_pedido ?? "—"} — Entrega prevista: ${dataAlvo.split("-").reverse().join("/")}</li>`,
+        `<li><b>O.S. ${escapeHtml(o.numero_os)}</b> — Cliente: ${escapeHtml(o.clientes?.nome ?? "—")} — Pedido: ${escapeHtml(o.numero_pedido ?? "—")} — Entrega prevista: ${dataAlvo.split("-").reverse().join("/")}</li>`,
     )
     .join("");
 
