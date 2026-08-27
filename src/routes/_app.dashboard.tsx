@@ -383,7 +383,6 @@ function DashboardPage() {
   // assim o faturamento realizado reflete quando o dinheiro efetivamente entrou.
   const calcularComparativo = useCallback(
     (rowsBase: typeof allRows, notasBase: typeof notasFiscaisData, mes: string) => {
-      const previstasNoMes = rowsBase.filter((r) => r.data_entrega_prev?.slice(0, 7) === mes);
       const realizadasNoMes = rowsBase.filter((r) => r.data_entrega_real?.slice(0, 7) === mes);
       const notasNoMes = (notasBase ?? []).filter((n) => n.data_emissao?.slice(0, 7) === mes);
       const faturamentoRealizado = notasNoMes.reduce((s, n) => s + Number(n.valor || 0), 0);
@@ -400,6 +399,7 @@ function DashboardPage() {
         data: string | null;
         valor: number;
         origem: "planejado" | "estimado";
+        situacao: "planejado" | "entregue" | "pendente";
       };
       const itensPrevisto: ItemPrevisto[] = [];
       rowsBase.forEach((r) => {
@@ -415,6 +415,7 @@ function DashboardPage() {
                 data: p.data_planejada,
                 valor: Number(p.valor_planejado || 0),
                 origem: "planejado",
+                situacao: "planejado",
               });
             });
         } else if (r.data_entrega_prev?.slice(0, 7) === mes) {
@@ -428,6 +429,7 @@ function DashboardPage() {
               data: r.data_entrega_prev,
               valor,
               origem: "estimado",
+              situacao: foiEntregue(r.status as OsStatus) ? "entregue" : "pendente",
             });
           }
         }
@@ -435,11 +437,10 @@ function DashboardPage() {
       const faturamentoPrevisto = itensPrevisto.reduce((s, i) => s + i.valor, 0);
 
       return {
-        entregasPrevistas: previstasNoMes.length,
+        entregasPrevistas: itensPrevisto.length,
         entregasRealizadas: realizadasNoMes.length,
         faturamentoPrevisto,
         faturamentoRealizado,
-        previstasNoMes,
         realizadasNoMes,
         notasNoMes,
         itensPrevisto,
@@ -665,52 +666,53 @@ function DashboardPage() {
                         <TableRow>
                           <TableHead>O.S.</TableHead>
                           <TableHead>Cliente</TableHead>
-                          <TableHead>Prazo de entrega</TableHead>
+                          <TableHead>Data prevista</TableHead>
                           <TableHead className="text-right">Valor</TableHead>
                           <TableHead>Situação</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {comparativoMes.previstasNoMes.map((r) => {
-                          const jaEntregue = foiEntregue(r.status as OsStatus);
-                          return (
-                            <TableRow key={r.id}>
-                              <TableCell>
-                                <Link
-                                  to="/ordens/$id"
-                                  params={{ id: r.id }}
-                                  className="font-medium hover:underline"
-                                >
-                                  {r.numero_os}
-                                </Link>
-                              </TableCell>
-                              <TableCell className="text-muted-foreground">
-                                {r.clientes?.nome ?? "—"}
-                              </TableCell>
-                              <TableCell>{formatDate(r.data_entrega_prev)}</TableCell>
-                              <TableCell className="text-right">
-                                {formatBRL(r.valor_total)}
-                              </TableCell>
-                              <TableCell>
-                                {jaEntregue ? (
-                                  <Badge variant="outline" className="text-success border-success/40 bg-success/10">
-                                    <CheckCircle2 className="h-3 w-3 mr-1" />
-                                    Entregue
-                                  </Badge>
-                                ) : (
-                                  <span className="text-xs text-muted-foreground">Pendente</span>
-                                )}
-                              </TableCell>
-                            </TableRow>
-                          );
-                        })}
-                        {comparativoMes.previstasNoMes.length === 0 && (
+                        {comparativoMes.itensPrevisto.map((item, idx) => (
+                          <TableRow key={`${item.osId}-${idx}`}>
+                            <TableCell>
+                              <Link
+                                to="/ordens/$id"
+                                params={{ id: item.osId }}
+                                className="font-medium hover:underline"
+                              >
+                                {item.numero_os}
+                              </Link>
+                            </TableCell>
+                            <TableCell className="text-muted-foreground">
+                              {item.clienteNome ?? "—"}
+                            </TableCell>
+                            <TableCell>{formatDate(item.data)}</TableCell>
+                            <TableCell className="text-right">{formatBRL(item.valor)}</TableCell>
+                            <TableCell>
+                              {item.situacao === "entregue" && (
+                                <Badge variant="outline" className="text-success border-success/40 bg-success/10">
+                                  <CheckCircle2 className="h-3 w-3 mr-1" />
+                                  Entregue
+                                </Badge>
+                              )}
+                              {item.situacao === "pendente" && (
+                                <span className="text-xs text-muted-foreground">Pendente</span>
+                              )}
+                              {item.situacao === "planejado" && (
+                                <Badge variant="outline" className="text-info border-info/40 bg-info/10">
+                                  Planejado
+                                </Badge>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                        {comparativoMes.itensPrevisto.length === 0 && (
                           <TableRow>
                             <TableCell
                               colSpan={5}
                               className="text-center text-sm text-muted-foreground py-6"
                             >
-                              Nenhuma O.S. com entrega prevista neste mês.
+                              Nenhuma entrega prevista neste mês.
                             </TableCell>
                           </TableRow>
                         )}
