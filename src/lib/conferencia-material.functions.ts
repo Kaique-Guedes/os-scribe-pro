@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { escapeHtml } from "@/lib/html-utils";
 import { z } from "zod";
 
 async function resolveEnv(key: string): Promise<string | undefined> {
@@ -198,12 +199,12 @@ async function enviarEmailConferencia(conferencia: any, itens: z.infer<typeof Co
       : `Divergência na conferência de material — O.S. ${numeroOs} (${categoria})`;
 
   const linhasDivergentes = divergentes
-    .map((i) => `<li>Item: ${i.observacao ?? "sem observação"} (qtd. recebida: ${i.quantidade_recebida ?? "?"})</li>`)
+    .map((i) => `<li>Item: ${escapeHtml(i.observacao ?? "sem observação")} (qtd. recebida: ${escapeHtml(i.quantidade_recebida ?? "?")})</li>`)
     .join("");
 
   const html = `
-    <p>A conferência física de material da <b>O.S. ${numeroOs}</b> foi concluída.</p>
-    <p><b>Categoria:</b> ${categoria}<br/><b>Descrição:</b> ${descricao}<br/><b>Resultado:</b> ${resultado === "ok" ? "Tudo certo" : "Divergência encontrada"}</p>
+    <p>A conferência física de material da <b>O.S. ${escapeHtml(numeroOs)}</b> foi concluída.</p>
+    <p><b>Categoria:</b> ${escapeHtml(categoria)}<br/><b>Descrição:</b> ${escapeHtml(descricao)}<br/><b>Resultado:</b> ${resultado === "ok" ? "Tudo certo" : "Divergência encontrada"}</p>
     ${divergentes.length > 0 ? `<p><b>Itens com divergência:</b></p><ul>${linhasDivergentes}</ul>` : ""}
   `;
 
