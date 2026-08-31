@@ -764,7 +764,30 @@ export type Database = {
         ];
       };
     };
-    Views: Record<string, never>;
+    Views: {
+      material_cotacoes_com_acesso: {
+        Row: {
+          id: string;
+          os_id: string;
+          categoria: Database["public"]["Enums"]["material_categoria"];
+          valor: number | null;
+          descricao: string;
+          prazo_entrega_dias: number | null;
+          anexo_id: string | null;
+          selecionada: boolean;
+          chegou: boolean;
+          data_chegada: string | null;
+          pedido_compra_anexo_id: string | null;
+          nota_fiscal_compra_anexo_id: string | null;
+          observacoes: string | null;
+          created_by: string | null;
+          created_at: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+    };
     Functions: {
       has_role: {
         Args: { _user_id: string; _role: Database["public"]["Enums"]["app_role"] };
