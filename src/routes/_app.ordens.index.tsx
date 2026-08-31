@@ -85,6 +85,22 @@ function OrdensList() {
     queryFn: async () => (await supabase.from("clientes").select("id, nome").order("nome")).data ?? [],
   });
 
+  // Essas duas só importam pro calendário (cada linha é UM evento, não a O.S.
+  // inteira) — por isso só buscamos quando a view calendário está aberta,
+  // pra não pesar a tela de lista à toa.
+  const { data: entregasPlanejadas } = useQuery({
+    queryKey: ["ordens-entregas-planejadas"],
+    enabled: viewAtual === "calendario",
+    queryFn: async () =>
+      (await supabase.from("os_entregas_planejadas").select("os_id, data_planejada, valor_planejado")).data ?? [],
+  });
+  const { data: notasFiscais } = useQuery({
+    queryKey: ["ordens-notas-fiscais"],
+    enabled: viewAtual === "calendario",
+    queryFn: async () =>
+      (await supabase.from("os_notas_fiscais").select("os_id, data_emissao, valor")).data ?? [],
+  });
+
   const { data: rows, isLoading } = useQuery({
     queryKey: ["ordens", statusFilter, clienteFilter],
     queryFn: async () => {
@@ -143,7 +159,13 @@ function OrdensList() {
       </div>
 
       {viewAtual === "calendario" ? (
-        <OrdensCalendario rows={filtered} tipoData={tipoData} onTipoDataChange={setTipoData} />
+        <OrdensCalendario
+          rows={filtered}
+          tipoData={tipoData}
+          onTipoDataChange={setTipoData}
+          entregasPlanejadas={entregasPlanejadas ?? []}
+          notasFiscais={notasFiscais ?? []}
+        />
       ) : (
       <Card>
         <CardHeader className="pb-3">
