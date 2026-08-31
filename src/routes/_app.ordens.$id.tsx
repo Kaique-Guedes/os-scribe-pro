@@ -149,14 +149,32 @@ function OsDetail() {
   });
   const { data: cotacoes } = useQuery({
     queryKey: ["material-cotacoes", id],
-    queryFn: async () =>
-      (
-        await supabase
-          .from("material_cotacoes")
-          .select("*, material_cotacao_itens(*)")
-          .eq("os_id", id)
-          .order("created_at", { ascending: false })
-      ).data ?? [],
+    queryFn: async () => {
+      // Lê pela view mascarada (não pela tabela direto): pra quem só tem o
+      // role "viewer", o campo `valor` já vem NULL — a máscara é aplicada no
+      // banco, não aqui no front. Views não têm o mesmo suporte de "embed"
+      // automático do PostgREST que uma tabela com FK tem, então os itens
+      // vêm numa segunda consulta e são unidos aqui no cliente.
+      const { data: cotacoesData } = await supabase
+        .from("material_cotacoes_com_acesso")
+        .select("*")
+        .eq("os_id", id)
+        .order("created_at", { ascending: false });
+      if (!cotacoesData || cotacoesData.length === 0) return [];
+
+      const { data: itensData } = await supabase
+        .from("material_cotacao_itens")
+        .select("*")
+        .in(
+          "cotacao_id",
+          cotacoesData.map((c) => c.id)
+        );
+
+      return cotacoesData.map((c) => ({
+        ...c,
+        material_cotacao_itens: (itensData ?? []).filter((it) => it.cotacao_id === c.id),
+      }));
+    },
   });
   const { data: conferencias } = useQuery({
     queryKey: ["material-conferencias", id],
