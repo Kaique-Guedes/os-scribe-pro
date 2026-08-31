@@ -405,6 +405,15 @@ function DashboardPage() {
       rowsBase.forEach((r) => {
         const planejadas = planejadasPorOs.get(r.id);
         if (planejadas && planejadas.length > 0) {
+          // Uma entrega planejada não tem elo direto no banco com a nota
+          // fiscal que a realiza (a tabela os_entregas_planejadas só guarda a
+          // previsão). Por isso consideramos "entregue" quando já existe pelo
+          // menos uma nota fiscal dessa O.S. emitida no MESMO MÊS do
+          // planejamento — é o sinal mais próximo que temos de "isso já
+          // aconteceu de verdade".
+          const notasDaOsNoMes = (notasBase ?? []).filter(
+            (n) => n.os_id === r.id && n.data_emissao?.slice(0, 7) === mes,
+          );
           planejadas
             .filter((p) => p.data_planejada?.slice(0, 7) === mes)
             .forEach((p) => {
@@ -415,7 +424,7 @@ function DashboardPage() {
                 data: p.data_planejada,
                 valor: Number(p.valor_planejado || 0),
                 origem: "planejado",
-                situacao: "planejado",
+                situacao: notasDaOsNoMes.length > 0 ? "entregue" : "planejado",
               });
             });
         } else if (r.data_entrega_prev?.slice(0, 7) === mes) {
@@ -729,6 +738,7 @@ function DashboardPage() {
                           <TableHead>Data</TableHead>
                           <TableHead className="text-right">Valor</TableHead>
                           <TableHead>Origem</TableHead>
+                          <TableHead>Situação</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -759,12 +769,28 @@ function DashboardPage() {
                                 </span>
                               )}
                             </TableCell>
+                            <TableCell>
+                              {item.situacao === "entregue" && (
+                                <Badge variant="outline" className="text-success border-success/40 bg-success/10">
+                                  <CheckCircle2 className="h-3 w-3 mr-1" />
+                                  Entregue
+                                </Badge>
+                              )}
+                              {item.situacao === "pendente" && (
+                                <span className="text-xs text-muted-foreground">Pendente</span>
+                              )}
+                              {item.situacao === "planejado" && (
+                                <Badge variant="outline" className="text-info border-info/40 bg-info/10">
+                                  Planejado
+                                </Badge>
+                              )}
+                            </TableCell>
                           </TableRow>
                         ))}
                         {comparativoMes.itensPrevisto.length === 0 && (
                           <TableRow>
                             <TableCell
-                              colSpan={5}
+                              colSpan={6}
                               className="text-center text-sm text-muted-foreground py-6"
                             >
                               Nenhum valor previsto pra este mês.
