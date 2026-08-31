@@ -19,7 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
-import { OS_STATUS_CLASS, type OsStatus } from "@/lib/os-utils";
+import { OS_STATUS_CLASS, formatBRL, type OsStatus } from "@/lib/os-utils";
 
 export type TipoDataCalendario = "prevista" | "real";
 
@@ -35,32 +35,138 @@ export interface OrdemCalendario {
   clientes: { nome: string } | null;
 }
 
+// Uma linha de "Planejamento de Entregas" cadastrada dentro da O.S. — o
+// mesmo dado que já alimenta o card Previsto×Realizado do dashboard.
+export interface EntregaPlanejadaCalendario {
+  os_id: string;
+  data_planejada: string;
+  valor_planejado: number;
+}
+
+// Uma nota fiscal emitida — é o evento que representa uma entrega/faturamento
+// REALMENTE acontecido (pode ser parcial, uma O.S. tem várias).
+export interface NotaFiscalCalendario {
+  os_id: string;
+  data_emissao: string;
+  valor: number;
+}
+
 interface OrdensCalendarioProps {
   rows: OrdemCalendario[];
   tipoData: TipoDataCalendario;
   onTipoDataChange: (v: TipoDataCalendario) => void;
+  entregasPlanejadas: EntregaPlanejadaCalendario[];
+  notasFiscais: NotaFiscalCalendario[];
 }
 
-// Agrupa as O.S. por dia (chave "yyyy-MM-dd") de acordo com o campo de data
-// escolhido no filtro. Um Map aqui é só uma forma eficiente de responder
-// "quais O.S. caem no dia X?" sem varrer o array inteiro pra cada célula do grid.
-function agruparPorDia(rows: OrdemCalendario[], tipoData: TipoDataCalendario) {
-  const campo = tipoData === "prevista" ? "data_entrega_prev" : "data_entrega_real";
-  const map = new Map<string, OrdemCalendario[]>();
-  for (const r of rows) {
-    const data = r[campo];
-    if (!data) continue;
-    const chave = data.slice(0, 10); // "yyyy-MM-dd"
-    if (!map.has(chave)) map.set(chave, []);
-    map.get(chave)!.push(r);
+// Um evento de calendário é sempre "uma O.S., num dia, com um valor" — pode
+// vir de 3 lugares diferentes dependendo do tipo:
+// - "prevista": uma linha de planejamento (data_planejada) se existir; senão
+//   cai pra data_entrega_prev da O.S. inteira (comportamento antigo).
+// - "real": uma nota fiscal (data_emissao) se existir alguma; senão cai pra
+//   data_entrega_real da O.S. inteira.
+// Isso é o mesmo raciocínio de "previsto fatiado por mês" já usado no
+// dashboard — aqui só desenhamos no calendário em vez de somar num card.
+interface EventoCalendario {
+  key: string;
+  osId: string;
+  numero_os: string | null;
+  clienteNome: string | null;
+  status: OsStatus;
+  data: string; // "yyyy-MM-dd"
+  valor: number | null;
+}
+
+function agruparPorDia(
+  rows: OrdemCalendario[],
+  tipoData: TipoDataCalendario,
+  entregasPlanejadas: EntregaPlanejadaCalendario[],
+  notasFiscais: NotaFiscalCalendario[],
+) {
+  const eventos: EventoCalendario[] = [];
+  const rowsPorId = new Map(rows.map((r) => [r.id, r]));
+
+  if (tipoData === "prevista") {
+    const osComPlanejamento = new Set(entregasPlanejadas.map((p) => p.os_id));
+    entregasPlanejadas.forEach((p, idx) => {
+      const r = rowsPorId.get(p.os_id);
+      if (!r || !p.data_planejada) return;
+      eventos.push({
+        key: `plan-${p.os_id}-${idx}`,
+        osId: r.id,
+        numero_os: r.numero_os,
+        clienteNome: r.clientes?.nome ?? null,
+        status: r.status,
+        data: p.data_planejada.slice(0, 10),
+        valor: Number(p.valor_planejado || 0),
+      });
+    });
+    // Fallback: O.S. sem nenhuma linha de planejamento cadastrada continua
+    // aparecendo pela data de entrega prevista da O.S. inteira.
+    rows.forEach((r) => {
+      if (osComPlanejamento.has(r.id) || !r.data_entrega_prev) return;
+      eventos.push({
+        key: `plan-fallback-${r.id}`,
+        osId: r.id,
+        numero_os: r.numero_os,
+        clienteNome: r.clientes?.nome ?? null,
+        status: r.status,
+        data: r.data_entrega_prev.slice(0, 10),
+        valor: null,
+      });
+    });
+  } else {
+    const osComNota = new Set(notasFiscais.map((n) => n.os_id));
+    notasFiscais.forEach((n, idx) => {
+      const r = rowsPorId.get(n.os_id);
+      if (!r || !n.data_emissao) return;
+      eventos.push({
+        key: `nf-${n.os_id}-${idx}`,
+        osId: r.id,
+        numero_os: r.numero_os,
+        clienteNome: r.clientes?.nome ?? null,
+        status: r.status,
+        data: n.data_emissao.slice(0, 10),
+        valor: Number(n.valor || 0),
+      });
+    });
+    // Fallback: O.S. sem nenhuma nota fiscal emitida continua aparecendo pela
+    // data de entrega real da O.S. inteira (ex: entrega sem faturamento ainda).
+    rows.forEach((r) => {
+      if (osComNota.has(r.id) || !r.data_entrega_real) return;
+      eventos.push({
+        key: `real-fallback-${r.id}`,
+        osId: r.id,
+        numero_os: r.numero_os,
+        clienteNome: r.clientes?.nome ?? null,
+        status: r.status,
+        data: r.data_entrega_real.slice(0, 10),
+        valor: null,
+      });
+    });
+  }
+
+  const map = new Map<string, EventoCalendario[]>();
+  for (const evento of eventos) {
+    if (!map.has(evento.data)) map.set(evento.data, []);
+    map.get(evento.data)!.push(evento);
   }
   return map;
 }
 
-export function OrdensCalendario({ rows, tipoData, onTipoDataChange }: OrdensCalendarioProps) {
+export function OrdensCalendario({
+  rows,
+  tipoData,
+  onTipoDataChange,
+  entregasPlanejadas,
+  notasFiscais,
+}: OrdensCalendarioProps) {
   const [mesAtual, setMesAtual] = useState(() => startOfMonth(new Date()));
 
-  const porDia = useMemo(() => agruparPorDia(rows, tipoData), [rows, tipoData]);
+  const porDia = useMemo(
+    () => agruparPorDia(rows, tipoData, entregasPlanejadas, notasFiscais),
+    [rows, tipoData, entregasPlanejadas, notasFiscais],
+  );
 
   // O grid sempre mostra semanas completas (dom-sáb), por isso o início/fim
   // do grid podem "vazar" um pouco pro mês anterior/seguinte.
@@ -123,14 +229,15 @@ export function OrdensCalendario({ rows, tipoData, onTipoDataChange }: OrdensCal
               </span>
 
               <div className="space-y-1">
-                {ordensNoDia.slice(0, 3).map(os => (
-                  <Link key={os.id} to="/ordens/$id" params={{ id: os.id }}>
+                {ordensNoDia.slice(0, 3).map(evento => (
+                  <Link key={evento.key} to="/ordens/$id" params={{ id: evento.osId }}>
                     <Badge
                       variant="outline"
-                      className={`block w-full truncate text-[11px] font-normal ${OS_STATUS_CLASS[os.status]}`}
-                      title={`${os.numero_os ?? ""} — ${os.clientes?.nome ?? ""}`}
+                      className={`block w-full truncate text-[11px] font-normal ${OS_STATUS_CLASS[evento.status]}`}
+                      title={`${evento.numero_os ?? ""} — ${evento.clienteNome ?? ""}${evento.valor ? ` — ${formatBRL(evento.valor)}` : ""}`}
                     >
-                      {os.numero_os} · {os.clientes?.nome ?? "—"}
+                      {evento.numero_os} · {evento.clienteNome ?? "—"}
+                      {evento.valor ? ` · ${formatBRL(evento.valor)}` : ""}
                     </Badge>
                   </Link>
                 ))}
