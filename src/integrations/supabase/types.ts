@@ -787,6 +787,77 @@ export type Database = {
         Update: never;
         Relationships: [];
       };
+      ordens_servico_com_acesso: {
+        Row: {
+          id: string;
+          numero_os: string;
+          cliente_id: string | null;
+          solicitante: string | null;
+          numero_ss: string | null;
+          numero_pedido: string | null;
+          projeto: string | null;
+          gestor: string | null;
+          orcamentista: string | null;
+          data_inicio_prev: string | null;
+          data_entrega_prev: string | null;
+          data_entrega_real: string | null;
+          unidade: string | null;
+          quantidade: number | null;
+          valor_unit: number | null;
+          valor_total: number | null;
+          peso_kg: number | null;
+          local_entrega: string | null;
+          tipo_frete: string | null;
+          descricao: string | null;
+          fora_escopo: string | null;
+          status: Database["public"]["Enums"]["os_status"];
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+          valor_faturado_real: number | null;
+          data_faturamento_real: string | null;
+          numero_nota_fiscal: string | null;
+          nota_fiscal_anexo_id: string | null;
+          pesquisa_satisfacao_enviada_em: string | null;
+          aviso_prazo_enviado_em: string | null;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+      os_notas_fiscais_com_acesso: {
+        Row: {
+          id: string;
+          os_id: string;
+          numero_nota_fiscal: string | null;
+          valor: number | null;
+          data_emissao: string;
+          storage_path: string;
+          nome_arquivo: string;
+          uploaded_by: string | null;
+          created_at: string;
+          quantidade: number | null;
+          unidade: string | null;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+      os_entregas_planejadas_com_acesso: {
+        Row: {
+          id: string;
+          os_id: string;
+          data_planejada: string;
+          quantidade_planejada: number | null;
+          valor_planejado: number | null;
+          observacao: string | null;
+          created_by: string | null;
+          created_at: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
     };
     Functions: {
       has_role: {
