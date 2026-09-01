@@ -1,0 +1,245 @@
+diff --git a/src/lib/cotacao-extract.functions.ts b/src/lib/cotacao-extract.functions.ts
+index 6166f9c..ecd4a1c 100644
+--- a/src/lib/cotacao-extract.functions.ts
++++ b/src/lib/cotacao-extract.functions.ts
+@@ -1,6 +1,7 @@
+ import { createServerFn } from "@tanstack/react-start";
+ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+ import { z } from "zod";
++import { callGemini, getGeminiApiKey } from "@/lib/gemini-client";
+ 
+ const Input = z.object({
+   filename: z.string().min(1),
+@@ -40,40 +41,12 @@ Retorne:
+ Se a mesma descrição/código aparecer em mais de uma linha (ex: mesmo produto com quantidades diferentes), NÃO agrupe — retorne cada linha da tabela como um item separado, exatamente como está impressa.
+ Se um campo não estiver presente ou legível, retorne null nesse campo. Não invente informação. Se o documento não parecer ser um "PEDIDO DE" desse modelo, retorne itens como lista vazia e os demais campos como null.`;
+ 
+-const GEMINI_MODEL = "gemini-3.5-flash-lite";
+-
+-async function callGemini(apiKey: string, body: unknown) {
+-  const res = await fetch(
+-    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
+-    {
+-      method: "POST",
+-      headers: {
+-        "Content-Type": "application/json",
+-        "x-goog-api-key": apiKey,
+-      },
+-      body: JSON.stringify(body),
+-    },
+-  );
+-  if (!res.ok) {
+-    const t = await res.text();
+-    throw new Error(`Gemini API ${res.status}: ${t.slice(0, 300)}`);
+-  }
+-  return res.json();
+-}
+ 
+ export const extractCotacaoFromDocument = createServerFn({ method: "POST" })
+   .middleware([requireSupabaseAuth])
+   .inputValidator((data: unknown) => Input.parse(data))
+   .handler(async ({ data }): Promise<ExtractedCotacao> => {
+-    let cfApiKey: string | undefined;
+-    try {
+-      const cfWorkers = (await import("cloudflare:workers")) as { env?: Record<string, string> };
+-      cfApiKey = cfWorkers.env?.GEMINI_API_KEY;
+-    } catch {
+-      // Não estamos rodando no runtime do Cloudflare Workers (ex: dev local) — ignora.
+-    }
+-    const apiKey = process.env.GEMINI_API_KEY || cfApiKey;
+-    if (!apiKey) throw new Error("GEMINI_API_KEY ausente");
++    const apiKey = await getGeminiApiKey();
+ 
+     const schema = {
+       type: "OBJECT",
+diff --git a/src/lib/gemini-client.ts b/src/lib/gemini-client.ts
+new file mode 100644
+index 0000000..8f11e9e
+--- /dev/null
++++ b/src/lib/gemini-client.ts
+@@ -0,0 +1,73 @@
++// Módulo central de acesso à API do Gemini (Google AI Studio).
++// Antes, cada arquivo de extração (os-extract, nota-fiscal-extract, cotacao-extract)
++// tinha sua própria cópia de callGemini + busca de API key. Centralizado aqui pra:
++// 1) corrigir em um lugar só quando algo mudar (ex: trocar de modelo)
++// 2) adicionar retry para erros temporários do Gemini (ex: 503 "model overloaded")
++
++export const GEMINI_MODEL = "gemini-3.5-flash-lite";
++
++const MAX_RETRIES = 3;
++const BASE_DELAY_MS = 1000; // 1s, depois 2s, depois 4s (backoff exponencial)
++
++// Só faz sentido tentar de novo em erros que são "temporários" do lado do Google.
++// 503 = servidor sobrecarregado (o erro do print). 429 = rate limit (limite de pedidos por minuto).
++// Erros como 400 (prompt inválido) ou 401 (chave errada) nunca vão se resolver tentando de novo.
++const RETRYABLE_STATUS = new Set([429, 503]);
++
++function sleep(ms: number) {
++  return new Promise((resolve) => setTimeout(resolve, ms));
++}
++
++/**
++ * Busca a GEMINI_API_KEY tanto em runtime Cloudflare Workers (produção)
++ * quanto em process.env (dev local). Lança erro claro se não achar.
++ */
++export async function getGeminiApiKey(): Promise<string> {
++  let cfApiKey: string | undefined;
++  try {
++    const cfWorkers = (await import("cloudflare:workers")) as { env?: Record<string, string> };
++    cfApiKey = cfWorkers.env?.GEMINI_API_KEY;
++  } catch {
++    // Não estamos rodando no runtime do Cloudflare Workers (ex: dev local) — ignora.
++  }
++  const apiKey = process.env.GEMINI_API_KEY || cfApiKey;
++  if (!apiKey) throw new Error("GEMINI_API_KEY ausente");
++  return apiKey;
++}
++
++/**
++ * Chama a API generateContent do Gemini, com retry automático (backoff exponencial)
++ * para erros temporários (503 sobrecarregado, 429 rate limit).
++ */
++export async function callGemini(apiKey: string, body: unknown) {
++  let lastError: Error | null = null;
++
++  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
++    const res = await fetch(
++      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
++      {
++        method: "POST",
++        headers: {
++          "Content-Type": "application/json",
++          "x-goog-api-key": apiKey,
++        },
++        body: JSON.stringify(body),
++      },
++    );
++
++    if (res.ok) return res.json();
++
++    const t = await res.text();
++    lastError = new Error(`Gemini API ${res.status}: ${t.slice(0, 300)}`);
++
++    const isRetryable = RETRYABLE_STATUS.has(res.status);
++    const isLastAttempt = attempt === MAX_RETRIES;
++    if (!isRetryable || isLastAttempt) throw lastError;
++
++    // Backoff exponencial: espera 1s, depois 2s, depois 4s antes de tentar de novo.
++    await sleep(BASE_DELAY_MS * 2 ** attempt);
++  }
++
++  // Inalcançável na prática (o loop sempre retorna ou lança antes), mas satisfaz o TypeScript.
++  throw lastError ?? new Error("Falha desconhecida ao chamar Gemini API");
++}
+diff --git a/src/lib/nota-fiscal-extract.functions.ts b/src/lib/nota-fiscal-extract.functions.ts
+index ac1a922..ecd779a 100644
+--- a/src/lib/nota-fiscal-extract.functions.ts
++++ b/src/lib/nota-fiscal-extract.functions.ts
+@@ -1,6 +1,7 @@
+ import { createServerFn } from "@tanstack/react-start";
+ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+ import { z } from "zod";
++import { callGemini, getGeminiApiKey } from "@/lib/gemini-client";
+ 
+ const Input = z.object({
+   filename: z.string().min(1),
+@@ -21,42 +22,11 @@ Analise o documento anexado (pode ser a nota fiscal completa ou o DANFE) e retor
+ - valor_total: o valor total da nota (o "VALOR TOTAL DA NOTA" ou "VALOR TOTAL DA NF-e"), como número, sem "R$", com ponto como separador decimal.
+ Se um campo não estiver presente ou legível, retorne null. Não invente informação. Se o documento não parecer ser uma nota fiscal, retorne todos os campos como null.`;
+ 
+-// Chama a API do Gemini diretamente (Google AI Studio).
+-// Requer a variável de ambiente GEMINI_API_KEY (gerada em https://aistudio.google.com/apikey).
+-const GEMINI_MODEL = "gemini-3.5-flash-lite";
+-
+-async function callGemini(apiKey: string, body: unknown) {
+-  const res = await fetch(
+-    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
+-    {
+-      method: "POST",
+-      headers: {
+-        "Content-Type": "application/json",
+-        "x-goog-api-key": apiKey,
+-      },
+-      body: JSON.stringify(body),
+-    },
+-  );
+-  if (!res.ok) {
+-    const t = await res.text();
+-    throw new Error(`Gemini API ${res.status}: ${t.slice(0, 300)}`);
+-  }
+-  return res.json();
+-}
+-
+ export const extractNotaFiscalFromDocument = createServerFn({ method: "POST" })
+   .middleware([requireSupabaseAuth])
+   .inputValidator((data: unknown) => Input.parse(data))
+   .handler(async ({ data }): Promise<ExtractedNotaFiscal> => {
+-    let cfApiKey: string | undefined;
+-    try {
+-      const cfWorkers = (await import("cloudflare:workers")) as { env?: Record<string, string> };
+-      cfApiKey = cfWorkers.env?.GEMINI_API_KEY;
+-    } catch {
+-      // Não estamos rodando no runtime do Cloudflare Workers (ex: dev local) — ignora.
+-    }
+-    const apiKey = process.env.GEMINI_API_KEY || cfApiKey;
+-    if (!apiKey) throw new Error("GEMINI_API_KEY ausente");
++    const apiKey = await getGeminiApiKey();
+ 
+     const schema = {
+       type: "OBJECT",
+diff --git a/src/lib/os-extract.functions.ts b/src/lib/os-extract.functions.ts
+index 711e423..f24ab70 100644
+--- a/src/lib/os-extract.functions.ts
++++ b/src/lib/os-extract.functions.ts
+@@ -1,6 +1,7 @@
+ import { createServerFn } from "@tanstack/react-start";
+ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+ import { z } from "zod";
++import { callGemini, getGeminiApiKey } from "@/lib/gemini-client";
+ 
+ const Input = z.object({
+   filename: z.string().min(1),
+@@ -34,42 +35,11 @@ const SYSTEM_PROMPT = `Você é um assistente que extrai informações de pedido
+ Analise o documento anexado e retorne os dados estruturados. Se um campo não estiver presente, retorne null.
+ Datas devem estar em formato ISO YYYY-MM-DD. Valores monetários devem ser números em reais (sem R$, ponto como separador decimal). Não invente informação.`;
+ 
+-// Chama a API do Gemini diretamente (Google AI Studio), sem depender do gateway da Lovable.
+-// Requer a variável de ambiente GEMINI_API_KEY (gerada em https://aistudio.google.com/apikey).
+-const GEMINI_MODEL = "gemini-3.5-flash-lite";
+-
+-async function callGemini(apiKey: string, body: unknown) {
+-  const res = await fetch(
+-    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
+-    {
+-      method: "POST",
+-      headers: {
+-        "Content-Type": "application/json",
+-        "x-goog-api-key": apiKey,
+-      },
+-      body: JSON.stringify(body),
+-    },
+-  );
+-  if (!res.ok) {
+-    const t = await res.text();
+-    throw new Error(`Gemini API ${res.status}: ${t.slice(0, 300)}`);
+-  }
+-  return res.json();
+-}
+-
+ export const extractOsFromDocument = createServerFn({ method: "POST" })
+   .middleware([requireSupabaseAuth])
+   .inputValidator((data: unknown) => Input.parse(data))
+   .handler(async ({ data }): Promise<ExtractedOs> => {
+-    let cfApiKey: string | undefined;
+-    try {
+-      const cfWorkers = (await import("cloudflare:workers")) as { env?: Record<string, string> };
+-      cfApiKey = cfWorkers.env?.GEMINI_API_KEY;
+-    } catch {
+-      // Não estamos rodando no runtime do Cloudflare Workers (ex: dev local) — ignora.
+-    }
+-    const apiKey = process.env.GEMINI_API_KEY || cfApiKey;
+-    if (!apiKey) throw new Error("GEMINI_API_KEY ausente");
++    const apiKey = await getGeminiApiKey();
+ 
+     // Schema no formato aceito pela API nativa do Gemini (subconjunto de OpenAPI 3.0,
+     // usa "nullable" em vez de union type com "null").
