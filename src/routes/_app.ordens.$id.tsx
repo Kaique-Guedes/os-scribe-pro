@@ -74,7 +74,7 @@ import {
   Sparkles,
   CalendarClock,
 } from "lucide-react";
-import { useSession, useRoles, canEditEtapa, isOnlyAlmoxarifado, isAdmin, canUpdateStages } from "@/hooks/use-auth";
+import { useSession, useRoles, canEditEtapa, isOnlyAlmoxarifado, isAdmin, canUpdateStages, canViewFinanceiro } from "@/hooks/use-auth";
 
 export const Route = createFileRoute("/_app/ordens/$id")({
   head: () => ({ meta: [{ title: "O.S. — Sartori Group" }] }),
@@ -96,17 +96,34 @@ function OsDetail() {
   const { data: roles = [] } = useRoles(user?.id);
   // Almoxarifado só vê o que é dele: sem valores, sem dados de contrato, sem outras etapas.
   const restrito = isOnlyAlmoxarifado(roles);
+  // Controla só os 2-3 pontos desta tela que mostram dinheiro de verdade
+  // (Valor total, Faturado, e os campos peso/valor no formulário) — é
+  // diferente de `restrito`, que controla a tela inteira "modo almoxarifado".
+  // Um viewer, por exemplo: não é `restrito` (vê a tela completa), mas
+  // também não deveria ver dinheiro — por isso os dois guards existem
+  // separados.
+  const podeVerFinanceiro = canViewFinanceiro(roles);
 
   const { data: os, isLoading } = useQuery({
     queryKey: ["os", id],
     queryFn: async () => {
+      // A view não tem o mesmo suporte de "embed" automático do PostgREST que
+      // a tabela original tinha (FK direta pra clientes) — por isso o cliente
+      // vem numa segunda consulta e é anexado aqui, igual já fizemos na
+      // migration anterior pra material_cotacoes.
       const { data, error } = await supabase
-        .from("ordens_servico")
-        .select("*, clientes(id, nome)")
+        .from("ordens_servico_com_acesso")
+        .select("*")
         .eq("id", id)
         .single();
       if (error) throw error;
-      return data;
+      if (!data.cliente_id) return { ...data, clientes: null };
+      const { data: cliente } = await supabase
+        .from("clientes")
+        .select("id, nome")
+        .eq("id", data.cliente_id)
+        .maybeSingle();
+      return { ...data, clientes: cliente };
     },
   });
   const { data: etapas } = useQuery({
@@ -272,7 +289,7 @@ function OsDetail() {
     queryFn: async () =>
       (
         await supabase
-          .from("os_entregas_planejadas")
+          .from("os_entregas_planejadas_com_acesso")
           .select("*")
           .eq("os_id", id)
           .order("data_planejada", { ascending: true })
@@ -353,7 +370,7 @@ function OsDetail() {
     queryFn: async () =>
       (
         await supabase
-          .from("os_notas_fiscais")
+          .from("os_notas_fiscais_com_acesso")
           .select("*")
           .eq("os_id", id)
           .order("data_emissao", { ascending: false })
@@ -565,7 +582,14 @@ function OsDetail() {
   // está na família entregue/faturado — nunca em O.S. ainda em produção — e só
   // se o status salvo for diferente do que deveria ser pelo valor faturado.
   useEffect(() => {
-    if (restrito || !os || !notasFiscais) return;
+    // canViewFinanceiro: sem isso, pra quem não é admin/pcp/produção o
+    // `os.valor_total` e o `n.valor` de cada nota vêm mascarados como NULL
+    // (culpa da migration de mascaramento financeiro) — então totalFaturadoNf
+    // e valor_total colapsariam pra 0 e 0, e esse efeito ia "corrigir" o
+    // status da O.S. com base num total ERRADO. A RLS de escrita já bloquearia
+    // a gravação (só admin/pcp/produção atualizam ordens_servico), mas é melhor
+    // nem tentar rodar a conta com dado que a gente sabe que está incompleto.
+    if (restrito || !podeVerFinanceiro || !os || !notasFiscais) return;
     if (!["entregue", "faturado_parcialmente", "faturado"].includes(os.status)) return;
     const statusCorreto = statusPorFaturamento(totalFaturadoNf, Number(os.valor_total || 0));
     if (statusCorreto !== os.status) {
@@ -578,7 +602,7 @@ function OsDetail() {
           if (!error) qc.invalidateQueries({ queryKey: ["os", id] });
         });
     }
-  }, [restrito, os, notasFiscais, totalFaturadoNf, id, qc]);
+  }, [restrito, podeVerFinanceiro, os, notasFiscais, totalFaturadoNf, id, qc]);
 
   const [edit, setEdit] = useState<Record<string, unknown>>({});
   useEffect(() => {
@@ -1149,7 +1173,7 @@ function OsDetail() {
       </div>
 
       <div className={restrito ? "grid gap-4 lg:grid-cols-3" : "grid gap-4 lg:grid-cols-4"}>
-        {!restrito && <SummaryCard label="Valor total" value={formatBRL(Number(os.valor_total))} />}
+        {podeVerFinanceiro && <SummaryCard label="Valor total" value={formatBRL(Number(os.valor_total))} />}
         <SummaryCard
           label="Entrega prevista"
           value={formatDate(os.data_entrega_prev)}
@@ -1168,7 +1192,7 @@ function OsDetail() {
             tone={dias != null && dias > 0 && !os.data_entrega_real ? "danger" : "success"}
           />
         )}
-        {!restrito && (
+        {!restrito && podeVerFinanceiro && (
           <SummaryCard
             label="Faturado"
             value={`${formatBRL(totalFaturadoNf)} de ${formatBRL(Number(os.valor_total))}`}
@@ -1309,38 +1333,44 @@ function OsDetail() {
                     }
                   />
                 </Field>
-                <Field label="Peso (kg)">
-                  <Input
-                    type="number"
-                    step="0.001"
-                    value={String(val("peso_kg") ?? "")}
-                    onChange={(e) =>
-                      setField("peso_kg", e.target.value ? Number(e.target.value) : null)
-                    }
-                  />
-                </Field>
+                {podeVerFinanceiro && (
+                  <Field label="Peso (kg)">
+                    <Input
+                      type="number"
+                      step="0.001"
+                      value={String(val("peso_kg") ?? "")}
+                      onChange={(e) =>
+                        setField("peso_kg", e.target.value ? Number(e.target.value) : null)
+                      }
+                    />
+                  </Field>
+                )}
               </Section>
               <Section title="Valores e entrega">
-                <Field label="Valor unitário">
-                  <Input
-                    type="number"
-                    step="0.01"
-                    value={String(val("valor_unit") ?? "")}
-                    onChange={(e) =>
-                      setField("valor_unit", e.target.value ? Number(e.target.value) : null)
-                    }
-                  />
-                </Field>
-                <Field label="Valor total">
-                  <Input
-                    type="number"
-                    step="0.01"
-                    value={String(val("valor_total") ?? "")}
-                    onChange={(e) =>
-                      setField("valor_total", e.target.value ? Number(e.target.value) : null)
-                    }
-                  />
-                </Field>
+                {podeVerFinanceiro && (
+                  <>
+                    <Field label="Valor unitário">
+                      <Input
+                        type="number"
+                        step="0.01"
+                        value={String(val("valor_unit") ?? "")}
+                        onChange={(e) =>
+                          setField("valor_unit", e.target.value ? Number(e.target.value) : null)
+                        }
+                      />
+                    </Field>
+                    <Field label="Valor total">
+                      <Input
+                        type="number"
+                        step="0.01"
+                        value={String(val("valor_total") ?? "")}
+                        onChange={(e) =>
+                          setField("valor_total", e.target.value ? Number(e.target.value) : null)
+                        }
+                      />
+                    </Field>
+                  </>
+                )}
                 <Field label="Local de entrega">
                   <Input
                     value={String(val("local_entrega") ?? "")}
