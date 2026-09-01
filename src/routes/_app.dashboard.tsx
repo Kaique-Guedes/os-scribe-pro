@@ -85,13 +85,26 @@ function DashboardPage() {
     queryKey: ["dashboard-os"],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("ordens_servico")
+        .from("ordens_servico_com_acesso")
         .select(
-          "id, numero_os, cliente_id, status, valor_total, data_inicio_prev, data_entrega_prev, data_entrega_real, valor_faturado_real, data_faturamento_real, created_at, updated_at, clientes(nome)",
+          "id, numero_os, cliente_id, status, valor_total, data_inicio_prev, data_entrega_prev, data_entrega_real, valor_faturado_real, data_faturamento_real, created_at, updated_at",
         )
         .order("data_entrega_prev", { ascending: true });
       if (error) throw error;
-      return data ?? [];
+      if (!data || data.length === 0) return [];
+      // A view não tem o mesmo suporte de "embed" automático do PostgREST que
+      // a tabela original tinha (FK direta pra clientes) — busca os nomes à
+      // parte e anexa aqui, no mesmo formato que o resto do arquivo já espera
+      // (r.clientes?.nome).
+      const clienteIds = [...new Set(data.map((r) => r.cliente_id).filter((v): v is string => !!v))];
+      const { data: clientesData } = clienteIds.length
+        ? await supabase.from("clientes").select("id, nome").in("id", clienteIds)
+        : { data: [] as { id: string; nome: string }[] };
+      const clientesPorId = new Map((clientesData ?? []).map((c) => [c.id, c.nome]));
+      return data.map((r) => ({
+        ...r,
+        clientes: r.cliente_id ? { nome: clientesPorId.get(r.cliente_id) ?? null } : null,
+      }));
     },
   });
 
@@ -108,12 +121,37 @@ function DashboardPage() {
     queryKey: ["dashboard-notas-fiscais"],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("os_notas_fiscais")
-        .select(
-          "id, os_id, valor, data_emissao, numero_nota_fiscal, ordens_servico(numero_os, cliente_id, clientes(nome))",
-        );
+        .from("os_notas_fiscais_com_acesso")
+        .select("id, os_id, valor, data_emissao, numero_nota_fiscal");
       if (error) throw error;
-      return data ?? [];
+      if (!data || data.length === 0) return [];
+      // Mesma limitação de embed da query acima: busca a O.S. e o cliente de
+      // cada nota à parte e monta o mesmo formato aninhado que o resto do
+      // arquivo espera (n.ordens_servico.numero_os / .cliente_id / .clientes.nome).
+      const osIds = [...new Set(data.map((n) => n.os_id))];
+      const { data: osData } = await supabase
+        .from("ordens_servico_com_acesso")
+        .select("id, numero_os, cliente_id")
+        .in("id", osIds);
+      const clienteIds = [...new Set((osData ?? []).map((o) => o.cliente_id).filter((v): v is string => !!v))];
+      const { data: clientesData } = clienteIds.length
+        ? await supabase.from("clientes").select("id, nome").in("id", clienteIds)
+        : { data: [] as { id: string; nome: string }[] };
+      const clientesPorId = new Map((clientesData ?? []).map((c) => [c.id, c.nome]));
+      const osPorId = new Map((osData ?? []).map((o) => [o.id, o]));
+      return data.map((n) => {
+        const osDaNota = osPorId.get(n.os_id);
+        return {
+          ...n,
+          ordens_servico: osDaNota
+            ? {
+                numero_os: osDaNota.numero_os,
+                cliente_id: osDaNota.cliente_id,
+                clientes: osDaNota.cliente_id ? { nome: clientesPorId.get(osDaNota.cliente_id) ?? null } : null,
+              }
+            : null,
+        };
+      });
     },
   });
 
@@ -123,7 +161,7 @@ function DashboardPage() {
     queryKey: ["dashboard-entregas-planejadas"],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("os_entregas_planejadas")
+        .from("os_entregas_planejadas_com_acesso")
         .select("id, os_id, data_planejada, valor_planejado, quantidade_planejada");
       if (error) throw error;
       return data ?? [];
