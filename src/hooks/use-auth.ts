@@ -46,6 +46,14 @@ export function canViewClientes(roles: AppRole[]) {
 export function canUpdateStages(roles: AppRole[]) {
   return roles.some((r) => r === "admin" || r === "pcp" || r === "producao");
 }
+// Espelha a policy "os select"/"nf select"/"entregas_planejadas select" (RLS)
+// depois da migration de mascaramento financeiro — viewer e almoxarifado não
+// veem valor_unit/valor_total/peso_kg/valor da nota/valor planejado. Aqui é
+// só pra UI decidir o que desenhar; a fonte de verdade é a VIEW no banco, que
+// já devolve NULL nesses campos pra quem não tem um desses 3 roles.
+export function canViewFinanceiro(roles: AppRole[]) {
+  return roles.some((r) => r === "admin" || r === "pcp" || r === "producao");
+}
 export function isAdmin(roles: AppRole[]) {
   return roles.includes("admin");
 }
