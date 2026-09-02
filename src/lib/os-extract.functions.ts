@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
+import { callGemini, getGeminiApiKey } from "@/lib/gemini-client";
 
 const Input = z.object({
   filename: z.string().min(1),
@@ -34,42 +35,11 @@ const SYSTEM_PROMPT = `Você é um assistente que extrai informações de pedido
 Analise o documento anexado e retorne os dados estruturados. Se um campo não estiver presente, retorne null.
 Datas devem estar em formato ISO YYYY-MM-DD. Valores monetários devem ser números em reais (sem R$, ponto como separador decimal). Não invente informação.`;
 
-// Chama a API do Gemini diretamente (Google AI Studio), sem depender do gateway da Lovable.
-// Requer a variável de ambiente GEMINI_API_KEY (gerada em https://aistudio.google.com/apikey).
-const GEMINI_MODEL = "gemini-3.5-flash-lite";
-
-async function callGemini(apiKey: string, body: unknown) {
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-goog-api-key": apiKey,
-      },
-      body: JSON.stringify(body),
-    },
-  );
-  if (!res.ok) {
-    const t = await res.text();
-    throw new Error(`Gemini API ${res.status}: ${t.slice(0, 300)}`);
-  }
-  return res.json();
-}
-
 export const extractOsFromDocument = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((data: unknown) => Input.parse(data))
   .handler(async ({ data }): Promise<ExtractedOs> => {
-    let cfApiKey: string | undefined;
-    try {
-      const cfWorkers = (await import("cloudflare:workers")) as { env?: Record<string, string> };
-      cfApiKey = cfWorkers.env?.GEMINI_API_KEY;
-    } catch {
-      // Não estamos rodando no runtime do Cloudflare Workers (ex: dev local) — ignora.
-    }
-    const apiKey = process.env.GEMINI_API_KEY || cfApiKey;
-    if (!apiKey) throw new Error("GEMINI_API_KEY ausente");
+    const apiKey = await getGeminiApiKey();
 
     // Schema no formato aceito pela API nativa do Gemini (subconjunto de OpenAPI 3.0,
     // usa "nullable" em vez de union type com "null").
