@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
+import { callGemini, getGeminiApiKey } from "@/lib/gemini-client";
 
 const Input = z.object({
   filename: z.string().min(1),
@@ -21,42 +22,11 @@ Analise o documento anexado (pode ser a nota fiscal completa ou o DANFE) e retor
 - valor_total: o valor total da nota (o "VALOR TOTAL DA NOTA" ou "VALOR TOTAL DA NF-e"), como número, sem "R$", com ponto como separador decimal.
 Se um campo não estiver presente ou legível, retorne null. Não invente informação. Se o documento não parecer ser uma nota fiscal, retorne todos os campos como null.`;
 
-// Chama a API do Gemini diretamente (Google AI Studio).
-// Requer a variável de ambiente GEMINI_API_KEY (gerada em https://aistudio.google.com/apikey).
-const GEMINI_MODEL = "gemini-3.5-flash-lite";
-
-async function callGemini(apiKey: string, body: unknown) {
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-goog-api-key": apiKey,
-      },
-      body: JSON.stringify(body),
-    },
-  );
-  if (!res.ok) {
-    const t = await res.text();
-    throw new Error(`Gemini API ${res.status}: ${t.slice(0, 300)}`);
-  }
-  return res.json();
-}
-
 export const extractNotaFiscalFromDocument = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((data: unknown) => Input.parse(data))
   .handler(async ({ data }): Promise<ExtractedNotaFiscal> => {
-    let cfApiKey: string | undefined;
-    try {
-      const cfWorkers = (await import("cloudflare:workers")) as { env?: Record<string, string> };
-      cfApiKey = cfWorkers.env?.GEMINI_API_KEY;
-    } catch {
-      // Não estamos rodando no runtime do Cloudflare Workers (ex: dev local) — ignora.
-    }
-    const apiKey = process.env.GEMINI_API_KEY || cfApiKey;
-    if (!apiKey) throw new Error("GEMINI_API_KEY ausente");
+    const apiKey = await getGeminiApiKey();
 
     const schema = {
       type: "OBJECT",
