@@ -85,26 +85,13 @@ function DashboardPage() {
     queryKey: ["dashboard-os"],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("ordens_servico_com_acesso")
+        .from("ordens_servico")
         .select(
-          "id, numero_os, cliente_id, status, valor_total, data_inicio_prev, data_entrega_prev, data_entrega_real, valor_faturado_real, data_faturamento_real, created_at, updated_at",
+          "id, numero_os, cliente_id, status, valor_total, data_inicio_prev, data_entrega_prev, data_entrega_real, valor_faturado_real, data_faturamento_real, created_at, updated_at, clientes(nome)",
         )
         .order("data_entrega_prev", { ascending: true });
       if (error) throw error;
-      if (!data || data.length === 0) return [];
-      // A view não tem o mesmo suporte de "embed" automático do PostgREST que
-      // a tabela original tinha (FK direta pra clientes) — busca os nomes à
-      // parte e anexa aqui, no mesmo formato que o resto do arquivo já espera
-      // (r.clientes?.nome).
-      const clienteIds = [...new Set(data.map((r) => r.cliente_id).filter((v): v is string => !!v))];
-      const { data: clientesData } = clienteIds.length
-        ? await supabase.from("clientes").select("id, nome").in("id", clienteIds)
-        : { data: [] as { id: string; nome: string }[] };
-      const clientesPorId = new Map((clientesData ?? []).map((c) => [c.id, c.nome]));
-      return data.map((r) => ({
-        ...r,
-        clientes: r.cliente_id ? { nome: clientesPorId.get(r.cliente_id) ?? null } : null,
-      }));
+      return data ?? [];
     },
   });
 
@@ -121,37 +108,12 @@ function DashboardPage() {
     queryKey: ["dashboard-notas-fiscais"],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("os_notas_fiscais_com_acesso")
-        .select("id, os_id, valor, data_emissao, numero_nota_fiscal");
+        .from("os_notas_fiscais")
+        .select(
+          "id, os_id, valor, quantidade, data_emissao, numero_nota_fiscal, ordens_servico(numero_os, cliente_id, clientes(nome))",
+        );
       if (error) throw error;
-      if (!data || data.length === 0) return [];
-      // Mesma limitação de embed da query acima: busca a O.S. e o cliente de
-      // cada nota à parte e monta o mesmo formato aninhado que o resto do
-      // arquivo espera (n.ordens_servico.numero_os / .cliente_id / .clientes.nome).
-      const osIds = [...new Set(data.map((n) => n.os_id))];
-      const { data: osData } = await supabase
-        .from("ordens_servico_com_acesso")
-        .select("id, numero_os, cliente_id")
-        .in("id", osIds);
-      const clienteIds = [...new Set((osData ?? []).map((o) => o.cliente_id).filter((v): v is string => !!v))];
-      const { data: clientesData } = clienteIds.length
-        ? await supabase.from("clientes").select("id, nome").in("id", clienteIds)
-        : { data: [] as { id: string; nome: string }[] };
-      const clientesPorId = new Map((clientesData ?? []).map((c) => [c.id, c.nome]));
-      const osPorId = new Map((osData ?? []).map((o) => [o.id, o]));
-      return data.map((n) => {
-        const osDaNota = osPorId.get(n.os_id);
-        return {
-          ...n,
-          ordens_servico: osDaNota
-            ? {
-                numero_os: osDaNota.numero_os,
-                cliente_id: osDaNota.cliente_id,
-                clientes: osDaNota.cliente_id ? { nome: clientesPorId.get(osDaNota.cliente_id) ?? null } : null,
-              }
-            : null,
-        };
-      });
+      return data ?? [];
     },
   });
 
@@ -161,7 +123,7 @@ function DashboardPage() {
     queryKey: ["dashboard-entregas-planejadas"],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("os_entregas_planejadas_com_acesso")
+        .from("os_entregas_planejadas")
         .select("id, os_id, data_planejada, valor_planejado, quantidade_planejada");
       if (error) throw error;
       return data ?? [];
@@ -445,12 +407,18 @@ function DashboardPage() {
         if (planejadas && planejadas.length > 0) {
           // Uma entrega planejada não tem elo direto no banco com a nota
           // fiscal que a realiza (a tabela os_entregas_planejadas só guarda a
-          // previsão). Por isso consideramos "entregue" quando já existe pelo
-          // menos uma nota fiscal dessa O.S. emitida no MESMO MÊS do
-          // planejamento — é o sinal mais próximo que temos de "isso já
-          // aconteceu de verdade".
+          // previsão). Consideramos "entregue" quando existe uma nota fiscal
+          // dessa O.S., emitida no MESMO MÊS do planejamento, COM quantidade
+          // preenchida — quantidade é o que diferencia uma NF de entrega real
+          // de uma NF puramente financeira (ex: adiantamento). Esse é o MESMO
+          // critério usado para gravar data_entrega_real ao lançar a NF (ver
+          // _app.ordens.$id.tsx), então os dois cards do dashboard concordam.
           const notasDaOsNoMes = (notasBase ?? []).filter(
-            (n) => n.os_id === r.id && n.data_emissao?.slice(0, 7) === mes,
+            (n) =>
+              n.os_id === r.id &&
+              n.data_emissao?.slice(0, 7) === mes &&
+              n.quantidade != null &&
+              Number(n.quantidade) > 0,
           );
           planejadas
             .filter((p) => p.data_planejada?.slice(0, 7) === mes)
