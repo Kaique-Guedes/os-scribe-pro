@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
+import { callGemini, getGeminiApiKey } from "@/lib/gemini-client";
 
 const Input = z.object({
   filename: z.string().min(1),
@@ -40,40 +41,12 @@ Retorne:
 Se a mesma descrição/código aparecer em mais de uma linha (ex: mesmo produto com quantidades diferentes), NÃO agrupe — retorne cada linha da tabela como um item separado, exatamente como está impressa.
 Se um campo não estiver presente ou legível, retorne null nesse campo. Não invente informação. Se o documento não parecer ser um "PEDIDO DE" desse modelo, retorne itens como lista vazia e os demais campos como null.`;
 
-const GEMINI_MODEL = "gemini-3.5-flash-lite";
-
-async function callGemini(apiKey: string, body: unknown) {
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-goog-api-key": apiKey,
-      },
-      body: JSON.stringify(body),
-    },
-  );
-  if (!res.ok) {
-    const t = await res.text();
-    throw new Error(`Gemini API ${res.status}: ${t.slice(0, 300)}`);
-  }
-  return res.json();
-}
 
 export const extractCotacaoFromDocument = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((data: unknown) => Input.parse(data))
   .handler(async ({ data }): Promise<ExtractedCotacao> => {
-    let cfApiKey: string | undefined;
-    try {
-      const cfWorkers = (await import("cloudflare:workers")) as { env?: Record<string, string> };
-      cfApiKey = cfWorkers.env?.GEMINI_API_KEY;
-    } catch {
-      // Não estamos rodando no runtime do Cloudflare Workers (ex: dev local) — ignora.
-    }
-    const apiKey = process.env.GEMINI_API_KEY || cfApiKey;
-    if (!apiKey) throw new Error("GEMINI_API_KEY ausente");
+    const apiKey = await getGeminiApiKey();
 
     const schema = {
       type: "OBJECT",
