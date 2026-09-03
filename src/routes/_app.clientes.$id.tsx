@@ -51,13 +51,18 @@ function ClienteDetail() {
     queryKey: ["cliente", id],
     queryFn: async () => (await supabase.from("clientes").select("*").eq("id", id).single()).data,
   });
+  // Trocado de "ordens_servico" pra "ordens_servico_com_acesso": a tabela crua
+  // hoje só é lida por admin/pcp/producao, viewer/almoxarifado veriam "0 O.S."
+  // pra qualquer cliente. Sem embed aqui, então a troca é direta — os valores
+  // financeiros (valor_total) virão null pra quem não tem esses 3 papéis, o
+  // que é o comportamento esperado (mascarar, não esconder a O.S. inteira).
   const { data: ordens } = useQuery({
     queryKey: ["cliente-ordens", id],
     queryFn: async () =>
       (
         await supabase
-          .from("ordens_servico")
-          .select("*")
+          .from("ordens_servico_com_acesso")
+          .select("id, numero_os, projeto, status, valor_total, data_entrega_prev, data_entrega_real")
           .eq("cliente_id", id)
           .order("created_at", { ascending: false })
       ).data ?? [],
