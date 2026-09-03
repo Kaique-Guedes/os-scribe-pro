@@ -81,13 +81,18 @@ const MESES = [
 ];
 
 function DashboardPage() {
+  // Trocado de "ordens_servico" pra "ordens_servico_com_acesso": a tabela
+  // crua hoje só é lida por admin/pcp/producao, viewer/almoxarifado veriam
+  // o dashboard inteiro vazio. View não suporta o embed "clientes(nome)" do
+  // PostgREST (não tem FK declarada) — o nome do cliente é recolocado logo
+  // abaixo, em `allRows`, usando a lista de clientes já buscada de qualquer forma.
   const { data, isLoading } = useQuery({
     queryKey: ["dashboard-os"],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("ordens_servico")
+        .from("ordens_servico_com_acesso")
         .select(
-          "id, numero_os, cliente_id, status, valor_total, data_inicio_prev, data_entrega_prev, data_entrega_real, valor_faturado_real, data_faturamento_real, created_at, updated_at, clientes(nome)",
+          "id, numero_os, cliente_id, status, valor_total, data_inicio_prev, data_entrega_prev, data_entrega_real, valor_faturado_real, data_faturamento_real, created_at, updated_at",
         )
         .order("data_entrega_prev", { ascending: true });
       if (error) throw error;
@@ -104,14 +109,17 @@ function DashboardPage() {
     },
   });
 
-  const { data: notasFiscaisData } = useQuery({
+  // Trocado de "os_notas_fiscais" pra "os_notas_fiscais_com_acesso" (mesmo
+  // motivo acima). O embed aninhado "ordens_servico(numero_os, cliente_id,
+  // clientes(nome))" também não funciona mais numa view — cada nota fiscal é
+  // recolocada com esse mesmo formato logo abaixo, em `notasFiscaisData`,
+  // cruzando com `allRows` (que já tem numero_os/cliente_id/clientes.nome).
+  const { data: notasFiscaisRaw } = useQuery({
     queryKey: ["dashboard-notas-fiscais"],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("os_notas_fiscais")
-        .select(
-          "id, os_id, valor, quantidade, data_emissao, numero_nota_fiscal, ordens_servico(numero_os, cliente_id, clientes(nome))",
-        );
+        .from("os_notas_fiscais_com_acesso")
+        .select("id, os_id, valor, quantidade, data_emissao, numero_nota_fiscal");
       if (error) throw error;
       return data ?? [];
     },
@@ -119,11 +127,12 @@ function DashboardPage() {
 
   // Planejamento de entregas parciais (o "Previsto" fatiado por mês, cadastrado
   // dentro da própria O.S.) — ver card "Planejamento de Entregas" na tela da O.S.
+  // Trocado pra view mascarada pelo mesmo motivo das duas consultas acima.
   const { data: entregasPlanejadasData } = useQuery({
     queryKey: ["dashboard-entregas-planejadas"],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("os_entregas_planejadas")
+        .from("os_entregas_planejadas_com_acesso")
         .select("id, os_id, data_planejada, valor_planejado, quantidade_planejada");
       if (error) throw error;
       return data ?? [];
@@ -136,9 +145,42 @@ function DashboardPage() {
       (await supabase.from("clientes").select("id, nome").order("nome")).data ?? [],
   });
 
+  const clientesPorId = useMemo(
+    () => new Map((clientes ?? []).map((c) => [c.id, c.nome])),
+    [clientes],
+  );
+
   // Evita recriar o array em toda render quando `data` ainda é undefined —
   // sem isso, os useMemo que dependem de allRows perdem a memoização e recalculam sempre.
-  const allRows = useMemo(() => data ?? [], [data]);
+  // Também é aqui que recolocamos `clientes: {nome} | null` em cada O.S., já
+  // que a view não traz isso de graça (ver comentário na query `data` acima).
+  const allRows = useMemo(
+    () =>
+      (data ?? []).map((r) => ({
+        ...r,
+        clientes: clientesPorId.has(r.cliente_id) ? { nome: clientesPorId.get(r.cliente_id)! } : null,
+      })),
+    [data, clientesPorId],
+  );
+
+  // osById existe só pra "recompor" o embed antigo `ordens_servico(...)` de
+  // cada nota fiscal (ver `notasFiscaisData` abaixo) — sem isso, cada NF não
+  // saberia o número da O.S. nem o nome do cliente.
+  const osById = useMemo(() => new Map(allRows.map((r) => [r.id, r])), [allRows]);
+
+  const notasFiscaisData = useMemo(
+    () =>
+      (notasFiscaisRaw ?? []).map((n) => {
+        const os = osById.get(n.os_id);
+        return {
+          ...n,
+          ordens_servico: os
+            ? { numero_os: os.numero_os, cliente_id: os.cliente_id, clientes: os.clientes }
+            : null,
+        };
+      }),
+    [notasFiscaisRaw, osById],
+  );
 
   // Progresso de etapas por O.S: quantas das 5 etapas já estão concluídas
   const etapasPorOs = useMemo(() => {
