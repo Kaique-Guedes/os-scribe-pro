@@ -1,284 +1,283 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { useSession, useRoles, canEdit, isAdmin } from "@/hooks/use-auth";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useSession, useRoles } from "@/hooks/use-auth";
+import { canEdit, isAdmin } from "@/hooks/use-auth";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
-import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
+import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogTrigger, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction } from "@/components/ui/alert-dialog";
-import { ArrowLeft, Printer, Plus, Trash2, Lock, CheckCircle2 } from "lucide-react";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Plus, Users2, Search, FileText, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { formatDate, OS_STATUS_LABEL, OS_STATUS_LIST } from "@/lib/os-utils";
-import { resumoMaterial, type OsSnapshotItem, type Participante, type PlanoAcaoItem } from "@/lib/reuniao-utils";
-import { SartoriLogo } from "@/components/sartori-logo";
+import { formatDate, OS_STATUS_LABEL } from "@/lib/os-utils";
+import { REUNIAO_TIPO_LABEL, REUNIAO_STATUS_LABEL, buildOsSnapshotItem, type OsSnapshotItem } from "@/lib/reuniao-utils";
 
-export const Route = createFileRoute("/_app/reunioes/$id")({
-  head: () => ({ meta: [{ title: "Ata de Reunião — Sartori Group" }] }),
-  component: ReuniaoDetalhe,
+export const Route = createFileRoute("/_app/reunioes/")({
+  head: () => ({ meta: [{ title: "Reunião — Sartori Group" }] }),
+  component: ReunioesList,
 });
 
-function ReuniaoDetalhe() {
-  const { id } = Route.useParams();
-  const navigate = useNavigate();
-  const qc = useQueryClient();
+function ReunioesList() {
   const { user } = useSession();
   const { data: roles = [] } = useRoles(user?.id);
-  const podeEditar = canEdit(roles);
+  const podeCriar = canEdit(roles);
   const podeExcluir = isAdmin(roles);
+  const navigate = useNavigate();
+  const qc = useQueryClient();
 
-  const { data: reuniao, isLoading } = useQuery({
-    queryKey: ["reuniao", id],
+  const [open, setOpen] = useState(false);
+  const [tipo, setTipo] = useState<"individual" | "geral">("individual");
+  const [busca, setBusca] = useState("");
+  const [osSelecionadaId, setOsSelecionadaId] = useState<string | null>(null);
+  const [titulo, setTitulo] = useState("");
+
+  const { data: reunioes } = useQuery({
+    queryKey: ["reunioes"],
     queryFn: async () => {
-      const { data, error } = await supabase.from("reunioes").select("*").eq("id", id).single();
+      const { data, error } = await supabase.from("reunioes").select("*").order("created_at", { ascending: false });
       if (error) throw error;
       return data;
     },
   });
 
-  const [pauta, setPauta] = useState("");
-  const [participantes, setParticipantes] = useState<Participante[]>([]);
-  const [plano, setPlano] = useState<PlanoAcaoItem[]>([]);
-
-  // Sincroniza o estado local sempre que os dados chegam do banco (primeira
-  // carga) — depois disso, quem manda é o estado local até salvar de novo.
-  useEffect(() => {
-    if (!reuniao) return;
-    setPauta(reuniao.pauta ?? "");
-    setParticipantes(((reuniao.participantes as any) ?? []) as Participante[]);
-    setPlano((((reuniao.dados_snapshot as any)?.plano_acao ?? []) as PlanoAcaoItem[]));
-  }, [reuniao?.id]);
-
-  const finalizada = reuniao?.status === "finalizada";
-  const travado = !podeEditar || finalizada;
-
-  const salvar = useMutation({
-    mutationFn: async (novoStatus?: "finalizada") => {
-      const dadosSnapshot = { ...(reuniao?.dados_snapshot as any), plano_acao: plano };
-      const { error } = await supabase.from("reunioes").update({
-        pauta, participantes: participantes as any, dados_snapshot: dadosSnapshot as any,
-        ...(novoStatus ? { status: novoStatus } : {}),
-      }).eq("id", id);
+  // Lista de O.S. pra busca ao criar uma ata individual. Não precisa de
+  // useQuery/cache elaborado — é só pra escolher, some quando o dialog fecha.
+  // Trocado de "ordens_servico" pra "ordens_servico_com_acesso": a tabela crua
+  // hoje só é lida por admin/pcp/producao, viewer/almoxarifado não conseguiriam
+  // nem abrir o dialog de criar ata. Como a view não tem o embed "clientes(nome)"
+  // do PostgREST, buscamos os clientes à parte e cruzamos abaixo, em `ordensComCliente`.
+  const { data: ordensRaw } = useQuery({
+    queryKey: ["ordens-para-reuniao"],
+    enabled: open && tipo === "individual",
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("ordens_servico_com_acesso")
+        .select("id, numero_os, projeto, status, data_entrega_prev, data_entrega_real, cliente_id")
+        .order("numero_os", { ascending: false })
+        .limit(300);
       if (error) throw error;
+      return data;
     },
-    onSuccess: (_d, novoStatus) => {
-      qc.invalidateQueries({ queryKey: ["reuniao", id] });
+  });
+
+  const { data: clientesSimples } = useQuery({
+    queryKey: ["clientes-simple"],
+    enabled: open && tipo === "individual",
+    queryFn: async () => (await supabase.from("clientes").select("id, nome").order("nome")).data ?? [],
+  });
+
+  const ordens = useMemo(() => {
+    const clientesPorId = new Map((clientesSimples ?? []).map((c) => [c.id, c.nome]));
+    return (ordensRaw ?? []).map((o) => ({
+      ...o,
+      clientes: clientesPorId.has(o.cliente_id) ? { nome: clientesPorId.get(o.cliente_id)! } : null,
+    }));
+  }, [ordensRaw, clientesSimples]);
+
+  const ordensFiltradas = useMemo(() => {
+    if (!ordens) return [];
+    const termo = busca.trim().toLowerCase();
+    if (!termo) return ordens.slice(0, 30);
+    return ordens.filter(
+      (o) => o.numero_os.toLowerCase().includes(termo) || (o.clientes?.nome ?? "").toLowerCase().includes(termo)
+    ).slice(0, 30);
+  }, [ordens, busca]);
+
+  const criar = useMutation({
+    mutationFn: async () => {
+      if (!titulo.trim()) throw new Error("Dê um título pra ata.");
+
+      if (tipo === "individual") {
+        if (!osSelecionadaId) throw new Error("Selecione a O.S.");
+        const os = ordens?.find((o) => o.id === osSelecionadaId);
+        if (!os) throw new Error("O.S. não encontrada.");
+        const { data: etapas, error: eErr } = await supabase
+          .from("os_etapas").select("os_id, tipo, data, status").eq("os_id", os.id);
+        if (eErr) throw eErr;
+        const snapshot = buildOsSnapshotItem(os, etapas ?? []);
+        const { data: inserted, error } = await supabase.from("reunioes").insert({
+          tipo: "individual", os_id: os.id, titulo, dados_snapshot: snapshot as any,
+        }).select("id").single();
+        if (error) throw error;
+        return inserted.id;
+      }
+
+      // Ata geral: puxa todas as O.S. exceto as já totalmente faturadas.
+      // Mesma troca de tabela crua -> view mascarada, mas aqui buscamos os
+      // clientes em paralelo (Promise.all) porque essa mutation pode rodar
+      // sem o dialog "individual" ter aberto (aquela busca de clientes acima
+      // só liga com enabled: tipo === "individual").
+      const [{ data: todasOs, error: oErr }, { data: clientesData, error: cErr }] = await Promise.all([
+        supabase
+          .from("ordens_servico_com_acesso")
+          .select("id, numero_os, projeto, status, data_entrega_prev, data_entrega_real, cliente_id")
+          .neq("status", "faturado")
+          .order("numero_os"),
+        supabase.from("clientes").select("id, nome"),
+      ]);
+      if (oErr) throw oErr;
+      if (cErr) throw cErr;
+      const clientesPorIdGeral = new Map((clientesData ?? []).map((c) => [c.id, c.nome]));
+      const todasOsComCliente = (todasOs ?? []).map((os) => ({
+        ...os,
+        clientes: clientesPorIdGeral.has(os.cliente_id) ? { nome: clientesPorIdGeral.get(os.cliente_id)! } : null,
+      }));
+      const { data: etapas, error: eErr } = await supabase.from("os_etapas").select("os_id, tipo, data, status");
+      if (eErr) throw eErr;
+      const itens: OsSnapshotItem[] = todasOsComCliente.map((os) => buildOsSnapshotItem(os, etapas ?? []));
+      const { data: inserted, error } = await supabase.from("reunioes").insert({
+        tipo: "geral", titulo, dados_snapshot: { itens } as any,
+      }).select("id").single();
+      if (error) throw error;
+      return inserted.id;
+    },
+    onSuccess: (id) => {
       qc.invalidateQueries({ queryKey: ["reunioes"] });
-      toast.success(novoStatus === "finalizada" ? "Ata finalizada." : "Ata salva.");
+      setOpen(false);
+      navigate({ to: "/reunioes/$id", params: { id } });
     },
     onError: (e: Error) => toast.error(e.message),
   });
 
   const excluir = useMutation({
-    mutationFn: async () => {
-      const { error } = await supabase.from("reunioes").delete().eq("id", id);
+    mutationFn: async (reuniaoId: string) => {
+      const { error } = await supabase.from("reunioes").delete().eq("id", reuniaoId);
       if (error) throw error;
     },
     onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["reunioes"] });
       toast.success("Ata excluída.");
-      navigate({ to: "/reunioes" });
     },
     onError: (e: Error) => toast.error(e.message),
   });
 
-  if (isLoading) return <div className="p-6 text-sm text-muted-foreground">Carregando…</div>;
-  if (!reuniao) return <div className="p-6 text-sm text-muted-foreground">Ata não encontrada.</div>;
-
-  const snapshot = reuniao.dados_snapshot as any;
-  const itensBrutos: OsSnapshotItem[] = reuniao.tipo === "individual" ? [snapshot as OsSnapshotItem] : (snapshot?.itens ?? []);
-  // Ata geral: ordena pela sequência natural do fluxo da O.S. (aberta → ... →
-  // faturado), não por número de O.S. — reaproveita OS_STATUS_LIST, que já é
-  // a mesma ordem usada no dashboard/kanban, então fica consistente com o resto do sistema.
-  const itens = [...itensBrutos].sort((a, b) => OS_STATUS_LIST.indexOf(a.status) - OS_STATUS_LIST.indexOf(b.status));
-
   return (
-    <div className="p-6 space-y-4 print:p-0">
-      <div className="flex items-center justify-between print:hidden">
-        <Link to="/reunioes" className="text-sm text-muted-foreground flex items-center gap-1 hover:text-foreground">
-          <ArrowLeft className="h-4 w-4" />Voltar
-        </Link>
-        <div className="flex items-center gap-2">
-          {finalizada && <Badge className="gap-1"><Lock className="h-3 w-3" />Finalizada</Badge>}
-          <Button variant="outline" onClick={() => window.print()}><Printer className="h-4 w-4 mr-2" />Imprimir / Salvar PDF</Button>
-          {!travado && (
-            <>
-              <Button variant="outline" onClick={() => salvar.mutate(undefined)} disabled={salvar.isPending}>Salvar rascunho</Button>
-              <Button onClick={() => salvar.mutate("finalizada")} disabled={salvar.isPending}>
-                <CheckCircle2 className="h-4 w-4 mr-2" />Finalizar ata
-              </Button>
-            </>
-          )}
-          {podeExcluir && (
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button size="icon" variant="ghost"><Trash2 className="h-4 w-4 text-destructive" /></Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>Excluir "{reuniao.titulo}"?</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    {finalizada
-                      ? "Essa ata já foi finalizada. Excluir remove o registro permanentemente, sem volta."
-                      : "Isso remove o rascunho permanentemente."}
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                  <AlertDialogAction onClick={() => excluir.mutate()} className="bg-destructive hover:bg-destructive/90">
-                    Excluir
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          )}
+    <div className="p-6 space-y-4">
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
+            <Users2 className="h-6 w-6 text-primary" />Reunião
+          </h1>
+          <p className="text-sm text-muted-foreground">Atas de reunião vinculadas às O.S.</p>
         </div>
+        {podeCriar && (
+          <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) { setBusca(""); setOsSelecionadaId(null); setTitulo(""); } }}>
+            <DialogTrigger asChild><Button><Plus className="h-4 w-4 mr-2" />Criar reunião</Button></DialogTrigger>
+            <DialogContent className="max-w-lg">
+              <DialogHeader><DialogTitle>Nova ata de reunião</DialogTitle></DialogHeader>
+              <div className="space-y-4">
+                <Tabs value={tipo} onValueChange={(v) => { setTipo(v as any); setOsSelecionadaId(null); }}>
+                  <TabsList className="w-full">
+                    <TabsTrigger value="individual" className="flex-1">Uma O.S.</TabsTrigger>
+                    <TabsTrigger value="geral" className="flex-1">Geral (várias O.S.)</TabsTrigger>
+                  </TabsList>
+                </Tabs>
+
+                <div>
+                  <Label>Título da ata *</Label>
+                  <Input
+                    value={titulo}
+                    onChange={(e) => setTitulo(e.target.value)}
+                    placeholder={tipo === "individual" ? "Ex: Reunião de acompanhamento" : "Ex: Reunião geral de produção — semana 34"}
+                  />
+                </div>
+
+                {tipo === "individual" && (
+                  <div className="space-y-2">
+                    <Label>Selecione a O.S. *</Label>
+                    <div className="relative">
+                      <Search className="h-4 w-4 absolute left-2.5 top-2.5 text-muted-foreground" />
+                      <Input className="pl-8" placeholder="Buscar por número da O.S. ou cliente…" value={busca} onChange={(e) => setBusca(e.target.value)} />
+                    </div>
+                    <div className="border rounded-md max-h-64 overflow-y-auto divide-y">
+                      {ordensFiltradas.length === 0 && <div className="p-3 text-sm text-muted-foreground">Nenhuma O.S. encontrada.</div>}
+                      {ordensFiltradas.map((o) => (
+                        <button
+                          key={o.id}
+                          type="button"
+                          onClick={() => setOsSelecionadaId(o.id)}
+                          className={`w-full text-left p-3 text-sm hover:bg-muted transition-colors ${osSelecionadaId === o.id ? "bg-muted" : ""}`}
+                        >
+                          <div className="font-medium">{o.numero_os} — {o.clientes?.nome ?? "—"}</div>
+                          <div className="text-xs text-muted-foreground">{OS_STATUS_LABEL[o.status]}{o.projeto ? ` · ${o.projeto}` : ""}</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {tipo === "geral" && (
+                  <p className="text-sm text-muted-foreground">
+                    Essa ata vai puxar automaticamente todas as O.S. com status diferente de "Faturado".
+                  </p>
+                )}
+              </div>
+              <DialogFooter>
+                <Button onClick={() => criar.mutate()} disabled={criar.isPending}>
+                  {criar.isPending ? "Criando…" : "Criar e abrir ata"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        )}
       </div>
 
-      {/* A partir daqui é o conteúdo que vai pro papel/PDF quando clicar em Imprimir */}
-      <Card className="print:border-none print:shadow-none">
-        <CardHeader className="border-b">
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle className="text-xl">{reuniao.titulo}</CardTitle>
-              <p className="text-sm text-muted-foreground">Ata de Reunião · {formatDate(reuniao.data_reuniao)}</p>
-            </div>
-            <SartoriLogo className="h-8 w-auto print:block hidden" />
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-6 pt-6">
-
-          <section>
-            <h3 className="text-sm font-semibold mb-2">{reuniao.tipo === "individual" ? "Dados da O.S." : `O.S. envolvidas (${itens.length})`}</h3>
-            <div className="border rounded-md overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>O.S.</TableHead>
-                    <TableHead>Cliente</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Entrega prevista</TableHead>
-                    <TableHead>Material</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {itens.map((it) => (
-                    <TableRow key={it.os_id}>
-                      <TableCell className="font-medium">{it.numero_os}</TableCell>
-                      <TableCell>{it.cliente_nome}</TableCell>
-                      <TableCell><Badge variant="outline">{OS_STATUS_LABEL[it.status]}</Badge></TableCell>
-                      <TableCell>{it.data_entrega_real ? `Entregue em ${formatDate(it.data_entrega_real)}` : formatDate(it.data_entrega_prev)}</TableCell>
-                      <TableCell className="text-xs">{resumoMaterial(it)}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          </section>
-
-          <section>
-            <h3 className="text-sm font-semibold mb-2">Pauta / Observações</h3>
-            {travado ? (
-              <p className="text-sm whitespace-pre-wrap">{pauta || "—"}</p>
-            ) : (
-              <Textarea rows={4} value={pauta} onChange={(e) => setPauta(e.target.value)} placeholder="O que foi discutido nessa reunião…" />
-            )}
-          </section>
-
-          <section>
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-sm font-semibold">Plano de Ação</h3>
-              {!travado && (
-                <Button size="sm" variant="outline" onClick={() => setPlano((p) => [...p, { acao: "", responsavel: "", prazo: null, status: "pendente" }])}>
-                  <Plus className="h-3.5 w-3.5 mr-1" />Adicionar linha
-                </Button>
-              )}
-            </div>
-            <div className="border rounded-md overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-[40%]">Ação</TableHead>
-                    <TableHead>Responsável</TableHead>
-                    <TableHead>Prazo</TableHead>
-                    <TableHead>Status</TableHead>
-                    {!travado && <TableHead className="w-8" />}
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {plano.map((item, i) => (
-                    <TableRow key={i}>
-                      <TableCell>{travado ? item.acao : <Input value={item.acao} onChange={(e) => setPlano((p) => p.map((x, j) => j === i ? { ...x, acao: e.target.value } : x))} />}</TableCell>
-                      <TableCell>{travado ? item.responsavel : <Input value={item.responsavel} onChange={(e) => setPlano((p) => p.map((x, j) => j === i ? { ...x, responsavel: e.target.value } : x))} />}</TableCell>
-                      <TableCell>{travado ? formatDate(item.prazo) : <Input type="date" value={item.prazo ?? ""} onChange={(e) => setPlano((p) => p.map((x, j) => j === i ? { ...x, prazo: e.target.value || null } : x))} />}</TableCell>
-                      <TableCell>
-                        {travado ? (
-                          <Badge variant={item.status === "concluido" ? "default" : item.status === "atrasado" ? "destructive" : "secondary"}>
-                            {item.status === "concluido" ? "Concluído" : item.status === "atrasado" ? "Atrasado" : "Pendente"}
-                          </Badge>
-                        ) : (
-                          <Select value={item.status} onValueChange={(v) => setPlano((p) => p.map((x, j) => j === i ? { ...x, status: v as PlanoAcaoItem["status"] } : x))}>
-                            <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="pendente">Pendente</SelectItem>
-                              <SelectItem value="concluido">Concluído</SelectItem>
-                              <SelectItem value="atrasado">Atrasado</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        )}
-                      </TableCell>
-                      {!travado && (
-                        <TableCell>
-                          <Button size="icon" variant="ghost" onClick={() => setPlano((p) => p.filter((_, j) => j !== i))}>
-                            <Trash2 className="h-4 w-4 text-destructive" />
-                          </Button>
-                        </TableCell>
-                      )}
-                    </TableRow>
-                  ))}
-                  {plano.length === 0 && <TableRow><TableCell colSpan={5} className="text-sm text-muted-foreground text-center py-4">Nenhuma ação registrada.</TableCell></TableRow>}
-                </TableBody>
-              </Table>
-            </div>
-          </section>
-
-          <section>
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-sm font-semibold">Participantes</h3>
-              {!travado && (
-                <Button size="sm" variant="outline" onClick={() => setParticipantes((p) => [...p, { nome: "", cargo: "" }])}>
-                  <Plus className="h-3.5 w-3.5 mr-1" />Adicionar participante
-                </Button>
-              )}
-            </div>
-            <div className="grid sm:grid-cols-2 gap-4">
-              {participantes.map((p, i) => (
-                <div key={i} className="border rounded-md p-3 space-y-2">
-                  {travado ? (
-                    <div className="text-sm font-medium">{p.nome}{p.cargo ? ` — ${p.cargo}` : ""}</div>
-                  ) : (
-                    <div className="flex gap-2">
-                      <Input placeholder="Nome" value={p.nome} onChange={(e) => setParticipantes((arr) => arr.map((x, j) => j === i ? { ...x, nome: e.target.value } : x))} />
-                      <Input placeholder="Cargo / empresa" value={p.cargo ?? ""} onChange={(e) => setParticipantes((arr) => arr.map((x, j) => j === i ? { ...x, cargo: e.target.value } : x))} />
-                      <Button size="icon" variant="ghost" onClick={() => setParticipantes((arr) => arr.filter((_, j) => j !== i))}><Trash2 className="h-4 w-4 text-destructive" /></Button>
-                    </div>
-                  )}
-                  <div className="border-t pt-6 mt-2">
-                    <div className="border-b border-foreground/40 h-8" />
-                    <p className="text-xs text-muted-foreground mt-1">Assinatura</p>
+      <div className="grid gap-3">
+        {(reunioes ?? []).map((r) => {
+          const snap = r.dados_snapshot as any;
+          const subtitulo = r.tipo === "individual"
+            ? `O.S. ${snap?.numero_os ?? "—"} — ${snap?.cliente_nome ?? "—"}`
+            : `${snap?.itens?.length ?? 0} O.S. envolvidas`;
+          return (
+            <Card key={r.id} className="cursor-pointer hover:border-primary/50 transition-colors" onClick={() => navigate({ to: "/reunioes/$id", params: { id: r.id } })}>
+              <CardContent className="p-4 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <FileText className="h-5 w-5 text-muted-foreground shrink-0" />
+                  <div>
+                    <div className="font-medium">{r.titulo}</div>
+                    <div className="text-xs text-muted-foreground">{subtitulo} · {formatDate(r.data_reuniao)}</div>
                   </div>
                 </div>
-              ))}
-              {participantes.length === 0 && <p className="text-sm text-muted-foreground">Nenhum participante adicionado.</p>}
-            </div>
-          </section>
-
-        </CardContent>
-      </Card>
+                <div className="flex items-center gap-2">
+                  <Badge variant="outline">{REUNIAO_TIPO_LABEL[r.tipo]}</Badge>
+                  <Badge variant={r.status === "finalizada" ? "default" : "secondary"}>{REUNIAO_STATUS_LABEL[r.status]}</Badge>
+                  {podeExcluir && (
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button size="icon" variant="ghost" onClick={(e) => e.stopPropagation()}>
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent onClick={(e) => e.stopPropagation()}>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>Excluir "{r.titulo}"?</AlertDialogTitle>
+                          <AlertDialogDescription>
+                            {r.status === "finalizada"
+                              ? "Essa ata já foi finalizada. Excluir remove o registro permanentemente, sem volta."
+                              : "Isso remove o rascunho permanentemente."}
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                          <AlertDialogAction onClick={() => excluir.mutate(r.id)} className="bg-destructive hover:bg-destructive/90">
+                            Excluir
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          );
+        })}
+        {reunioes?.length === 0 && <p className="text-sm text-muted-foreground py-8 text-center">Nenhuma ata criada ainda.</p>}
+      </div>
     </div>
   );
 }
