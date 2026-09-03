@@ -97,16 +97,32 @@ function OsDetail() {
   // Almoxarifado só vê o que é dele: sem valores, sem dados de contrato, sem outras etapas.
   const restrito = isOnlyAlmoxarifado(roles);
 
+  // Trocado de "ordens_servico" (tabela crua) pra "ordens_servico_com_acesso"
+  // (view): a RLS de leitura da tabela crua hoje só deixa passar
+  // admin/pcp/producao — viewer/almoxarifado ficariam com essa tela em branco.
+  // A view expõe a linha pra todo mundo, só troca colunas de dinheiro por
+  // null pra quem não tem esses 3 papéis. Como view não tem FK, o embed
+  // "clientes(id, nome)" não funciona mais aqui — buscamos o cliente à parte
+  // e colamos no mesmo formato que o resto do arquivo já espera (os.clientes).
   const { data: os, isLoading } = useQuery({
     queryKey: ["os", id],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("ordens_servico")
-        .select("*, clientes(id, nome)")
+        .from("ordens_servico_com_acesso")
+        .select("*")
         .eq("id", id)
         .single();
       if (error) throw error;
-      return data;
+      let clienteEmbed: { id: string; nome: string } | null = null;
+      if (data.cliente_id) {
+        const { data: cliente } = await supabase
+          .from("clientes")
+          .select("id, nome")
+          .eq("id", data.cliente_id)
+          .maybeSingle();
+        clienteEmbed = cliente ?? null;
+      }
+      return { ...data, clientes: clienteEmbed };
     },
   });
   const { data: etapas } = useQuery({
@@ -267,13 +283,15 @@ function OsDetail() {
   }
 
   // ---- Entregas planejadas: o "Previsto" fatiado por mês (separado da nota fiscal real) ----
+  // Trocado pra view mascarada: a tabela crua hoje só é lida por
+  // admin/pcp/producao, viewer/almoxarifado ficariam sem ver o previsto.
   const { data: entregasPlanejadas } = useQuery({
     queryKey: ["os-entregas-planejadas", id],
     queryFn: async () =>
       (
         await supabase
-          .from("os_entregas_planejadas")
-          .select("*")
+          .from("os_entregas_planejadas_com_acesso")
+          .select("id, os_id, data_planejada, quantidade_planejada, valor_planejado, observacao, created_by, created_at")
           .eq("os_id", id)
           .order("data_planejada", { ascending: true })
       ).data ?? [],
@@ -348,13 +366,15 @@ function OsDetail() {
   });
 
   // ---- Notas Fiscais: uma O.S. pode ter várias (faturamento parcial/múltiplo) ----
+  // Trocado pra view mascarada: a tabela crua hoje só é lida por
+  // admin/pcp/producao, viewer/almoxarifado ficariam sem ver as NFs da O.S.
   const { data: notasFiscais } = useQuery({
     queryKey: ["os-notas-fiscais", id],
     queryFn: async () =>
       (
         await supabase
-          .from("os_notas_fiscais")
-          .select("*")
+          .from("os_notas_fiscais_com_acesso")
+          .select("id, os_id, numero_nota_fiscal, valor, data_emissao, storage_path, nome_arquivo, uploaded_by, created_at, quantidade, unidade")
           .eq("os_id", id)
           .order("data_emissao", { ascending: false })
       ).data ?? [],
