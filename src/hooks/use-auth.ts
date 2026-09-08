@@ -58,6 +58,13 @@ export function isAdmin(roles: AppRole[]) {
   return roles.includes("admin");
 }
 
+// Espelha a policy "os-files read" (RLS do bucket de storage) depois da
+// migration que restringiu leitura de anexos — viewer não baixa, todo o
+// resto sim. Só pra UI esconder o botão; a trava de verdade é a policy no banco.
+export function canDownloadAnexos(roles: AppRole[]) {
+  return roles.some((r) => r === "admin" || r === "pcp" || r === "producao" || r === "almoxarifado");
+}
+
 // Regra de edição por etapa: admin/pcp/producao editam qualquer etapa;
 // almoxarifado só edita solicitacao_material e chegada_material.
 // Espelha a policy "etapas write" do banco (RLS) — aqui é só pra UI (esconder/desabilitar campos).
