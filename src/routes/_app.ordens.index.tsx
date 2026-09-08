@@ -92,20 +92,26 @@ function OrdensList() {
     queryKey: ["ordens-entregas-planejadas"],
     enabled: viewAtual === "calendario",
     queryFn: async () =>
-      (await supabase.from("os_entregas_planejadas").select("os_id, data_planejada, valor_planejado")).data ?? [],
+      (await supabase.from("os_entregas_planejadas_com_acesso").select("os_id, data_planejada, valor_planejado")).data ?? [],
   });
   const { data: notasFiscais } = useQuery({
     queryKey: ["ordens-notas-fiscais"],
     enabled: viewAtual === "calendario",
     queryFn: async () =>
-      (await supabase.from("os_notas_fiscais").select("os_id, data_emissao, valor")).data ?? [],
+      (await supabase.from("os_notas_fiscais_com_acesso").select("os_id, data_emissao, valor")).data ?? [],
   });
 
+  // Trocado de "ordens_servico" (tabela crua, RLS bloqueia a linha inteira pra
+  // viewer/almoxarifado) pra "ordens_servico_com_acesso" (view que só mascara
+  // as colunas de dinheiro com null, mas deixa a linha passar pra todo mundo).
+  // View não tem foreign key declarada, então o embed "clientes(nome)" do
+  // PostgREST não funciona mais aqui — por isso o nome do cliente agora vem
+  // de um Map montado a partir da lista de clientes que já buscávamos pro filtro.
   const { data: rows, isLoading } = useQuery({
     queryKey: ["ordens", statusFilter, clienteFilter],
     queryFn: async () => {
-      let q = supabase.from("ordens_servico")
-        .select("id, numero_os, projeto, cliente_id, gestor, status, valor_total, data_entrega_prev, data_entrega_real, clientes(nome)")
+      let q = supabase.from("ordens_servico_com_acesso")
+        .select("id, numero_os, projeto, cliente_id, gestor, status, valor_total, data_entrega_prev, data_entrega_real")
         .order("created_at", { ascending: false });
       if (statusFilter !== "all") q = q.eq("status", statusFilter as OsStatus);
       if (clienteFilter !== "all") q = q.eq("cliente_id", clienteFilter);
@@ -115,7 +121,18 @@ function OrdensList() {
     },
   });
 
-  const filtered = (rows ?? []).filter(r => {
+  const clientesPorId = new Map((clientes ?? []).map(c => [c.id, c.nome]));
+
+  // OrdensCalendario (componente filho) espera cada linha com o formato antigo
+  // `clientes: { nome } | null`, que vinha de graça pelo embed do PostgREST.
+  // Como a view não tem embed, recriamos esse formato aqui a partir do Map
+  // acima, pra não ter que mexer no componente filho também.
+  const rowsComCliente = (rows ?? []).map(r => ({
+    ...r,
+    clientes: clientesPorId.has(r.cliente_id) ? { nome: clientesPorId.get(r.cliente_id)! } : null,
+  }));
+
+  const filtered = rowsComCliente.filter(r => {
     if (dataDe && (!r.data_entrega_prev || r.data_entrega_prev < dataDe)) return false;
     if (dataAte && (!r.data_entrega_prev || r.data_entrega_prev > dataAte)) return false;
     if (!search) return true;
