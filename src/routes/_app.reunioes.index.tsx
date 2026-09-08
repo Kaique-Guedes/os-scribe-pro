@@ -47,19 +47,37 @@ function ReunioesList() {
 
   // Lista de O.S. pra busca ao criar uma ata individual. Não precisa de
   // useQuery/cache elaborado — é só pra escolher, some quando o dialog fecha.
-  const { data: ordens } = useQuery({
+  // Trocado de "ordens_servico" pra "ordens_servico_com_acesso": a tabela crua
+  // hoje só é lida por admin/pcp/producao, viewer/almoxarifado não conseguiriam
+  // nem abrir o dialog de criar ata. Como a view não tem o embed "clientes(nome)"
+  // do PostgREST, buscamos os clientes à parte e cruzamos abaixo, em `ordensComCliente`.
+  const { data: ordensRaw } = useQuery({
     queryKey: ["ordens-para-reuniao"],
     enabled: open && tipo === "individual",
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("ordens_servico")
-        .select("id, numero_os, projeto, status, data_entrega_prev, data_entrega_real, clientes(nome)")
+        .from("ordens_servico_com_acesso")
+        .select("id, numero_os, projeto, status, data_entrega_prev, data_entrega_real, cliente_id")
         .order("numero_os", { ascending: false })
         .limit(300);
       if (error) throw error;
       return data;
     },
   });
+
+  const { data: clientesSimples } = useQuery({
+    queryKey: ["clientes-simple"],
+    enabled: open && tipo === "individual",
+    queryFn: async () => (await supabase.from("clientes").select("id, nome").order("nome")).data ?? [],
+  });
+
+  const ordens = useMemo(() => {
+    const clientesPorId = new Map((clientesSimples ?? []).map((c) => [c.id, c.nome]));
+    return (ordensRaw ?? []).map((o) => ({
+      ...o,
+      clientes: clientesPorId.has(o.cliente_id) ? { nome: clientesPorId.get(o.cliente_id)! } : null,
+    }));
+  }, [ordensRaw, clientesSimples]);
 
   const ordensFiltradas = useMemo(() => {
     if (!ordens) return [];
@@ -90,15 +108,28 @@ function ReunioesList() {
       }
 
       // Ata geral: puxa todas as O.S. exceto as já totalmente faturadas.
-      const { data: todasOs, error: oErr } = await supabase
-        .from("ordens_servico")
-        .select("id, numero_os, projeto, status, data_entrega_prev, data_entrega_real, clientes(nome)")
-        .neq("status", "faturado")
-        .order("numero_os");
+      // Mesma troca de tabela crua -> view mascarada, mas aqui buscamos os
+      // clientes em paralelo (Promise.all) porque essa mutation pode rodar
+      // sem o dialog "individual" ter aberto (aquela busca de clientes acima
+      // só liga com enabled: tipo === "individual").
+      const [{ data: todasOs, error: oErr }, { data: clientesData, error: cErr }] = await Promise.all([
+        supabase
+          .from("ordens_servico_com_acesso")
+          .select("id, numero_os, projeto, status, data_entrega_prev, data_entrega_real, cliente_id")
+          .neq("status", "faturado")
+          .order("numero_os"),
+        supabase.from("clientes").select("id, nome"),
+      ]);
       if (oErr) throw oErr;
+      if (cErr) throw cErr;
+      const clientesPorIdGeral = new Map((clientesData ?? []).map((c) => [c.id, c.nome]));
+      const todasOsComCliente = (todasOs ?? []).map((os) => ({
+        ...os,
+        clientes: clientesPorIdGeral.has(os.cliente_id) ? { nome: clientesPorIdGeral.get(os.cliente_id)! } : null,
+      }));
       const { data: etapas, error: eErr } = await supabase.from("os_etapas").select("os_id, tipo, data, status");
       if (eErr) throw eErr;
-      const itens: OsSnapshotItem[] = (todasOs ?? []).map((os) => buildOsSnapshotItem(os, etapas ?? []));
+      const itens: OsSnapshotItem[] = todasOsComCliente.map((os) => buildOsSnapshotItem(os, etapas ?? []));
       const { data: inserted, error } = await supabase.from("reunioes").insert({
         tipo: "geral", titulo, dados_snapshot: { itens } as any,
       }).select("id").single();
