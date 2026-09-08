@@ -74,7 +74,7 @@ import {
   Sparkles,
   CalendarClock,
 } from "lucide-react";
-import { useSession, useRoles, canEditEtapa, isOnlyAlmoxarifado, isAdmin, canUpdateStages } from "@/hooks/use-auth";
+import { useSession, useRoles, canEditEtapa, isOnlyAlmoxarifado, isAdmin, canUpdateStages, canDownloadAnexos } from "@/hooks/use-auth";
 
 export const Route = createFileRoute("/_app/ordens/$id")({
   head: () => ({ meta: [{ title: "O.S. — Sartori Group" }] }),
@@ -96,6 +96,11 @@ function OsDetail() {
   const { data: roles = [] } = useRoles(user?.id);
   // Almoxarifado só vê o que é dele: sem valores, sem dados de contrato, sem outras etapas.
   const restrito = isOnlyAlmoxarifado(roles);
+  // Espelha a RLS do bucket os-files (leitura) e a policy de escrita de
+  // os_anexos: viewer não baixa nem envia anexo, todo o resto sim (mesmo
+  // conjunto de papéis nas duas regras). Só pra UI esconder os botões — a
+  // trava de verdade é a policy no banco.
+  const podeBaixarAnexos = canDownloadAnexos(roles);
 
   // Trocado de "ordens_servico" (tabela crua) pra "ordens_servico_com_acesso"
   // (view): a RLS de leitura da tabela crua hoje só deixa passar
@@ -1963,6 +1968,7 @@ function OsDetail() {
                       key={nf.id}
                       className="flex items-center justify-between gap-2 text-sm border rounded-md p-2"
                     >
+                      {podeBaixarAnexos ? (
                       <button
                         className="flex-1 min-w-0 text-left hover:underline"
                         onClick={() => baixarNf(nf.storage_path, nf.nome_arquivo)}
@@ -1982,6 +1988,25 @@ function OsDetail() {
                           )}
                         </div>
                       </button>
+                      ) : (
+                      <div className="flex-1 min-w-0 text-left">
+                        <div className="flex items-center gap-1.5 truncate">
+                          <Paperclip className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                          <span className="truncate">
+                            {nf.numero_nota_fiscal
+                              ? `NF ${nf.numero_nota_fiscal}`
+                              : nf.nome_arquivo}
+                          </span>
+                        </div>
+                        <div className="text-xs text-muted-foreground mt-0.5">
+                          {formatDate(nf.data_emissao)} · {formatBRL(nf.valor)}
+                          {nf.quantidade != null && (
+                            <> · {nf.quantidade} {nf.unidade ?? ""}</>
+                          )}
+                        </div>
+                      </div>
+                      )}
+                      {podeBaixarAnexos && (
                       <Button
                         size="icon"
                         variant="ghost"
@@ -1990,6 +2015,7 @@ function OsDetail() {
                       >
                         <Download className="h-3.5 w-3.5" />
                       </Button>
+                      )}
                       <Button
                         size="icon"
                         variant="ghost"
@@ -2197,6 +2223,7 @@ function OsDetail() {
                   }
                 }}
               />
+              {podeBaixarAnexos && (
               <Button
                 size="sm"
                 variant="outline"
@@ -2207,6 +2234,7 @@ function OsDetail() {
                 <Upload className="h-4 w-4" />
                 {uploadAnexo.isPending ? "Enviando..." : "Enviar arquivo"}
               </Button>
+              )}
               <ul className="space-y-2 max-h-72 overflow-auto pr-1">
                 {(anexos ?? []).length === 0 && (
                   <li className="text-sm text-muted-foreground">Nenhum anexo.</li>
@@ -2214,12 +2242,17 @@ function OsDetail() {
                 {(anexos ?? []).map((a) => (
                   <li key={a.id} className="flex items-center gap-2 text-sm border rounded-md p-2">
                     <Paperclip className="h-4 w-4 text-muted-foreground shrink-0" />
-                    <button
-                      className="flex-1 min-w-0 text-left hover:underline truncate"
-                      onClick={() => downloadAnexo(a.storage_path, a.nome)}
-                    >
-                      {a.nome}
-                    </button>
+                    {podeBaixarAnexos ? (
+                      <button
+                        className="flex-1 min-w-0 text-left hover:underline truncate"
+                        onClick={() => downloadAnexo(a.storage_path, a.nome)}
+                      >
+                        {a.nome}
+                      </button>
+                    ) : (
+                      <span className="flex-1 min-w-0 truncate text-muted-foreground">{a.nome}</span>
+                    )}
+                    {podeBaixarAnexos && (
                     <Button
                       size="icon"
                       variant="ghost"
@@ -2228,7 +2261,7 @@ function OsDetail() {
                     >
                       <Download className="h-3.5 w-3.5" />
                     </Button>
-                    <Button
+                    )}<Button
                       size="icon"
                       variant="ghost"
                       className="h-7 w-7 text-destructive"
