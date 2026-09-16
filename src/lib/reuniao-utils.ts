@@ -36,6 +36,7 @@ export type OsSnapshotItem = {
   data_solicitacao_material: string | null;
   material_chegou: boolean;
   data_chegada_material: string | null;
+  observacao: string;
 };
 
 type OsParaSnapshot = {
@@ -68,6 +69,7 @@ export function buildOsSnapshotItem(os: OsParaSnapshot, etapas: EtapaParaSnapsho
     data_solicitacao_material: solicitacao?.data ?? null,
     material_chegou: chegada?.status === "concluido",
     data_chegada_material: chegada?.data ?? null,
+    observacao: "",
   };
 }
 
