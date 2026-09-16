@@ -1293,10 +1293,10 @@ function ComparativoStat({
   onClick?: () => void;
   ativo?: boolean;
 }) {
-  const toneMap = {
+    const toneMap = {
     neutral: "bg-muted text-foreground",
     success: "bg-success/10 text-success",
-    warning: "bg-warning/10 text-warning-foreground",
+    warning: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
   } as const;
   return (
     <button
