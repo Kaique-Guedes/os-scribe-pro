@@ -44,6 +44,7 @@ function ReuniaoDetalhe() {
   const [pauta, setPauta] = useState("");
   const [participantes, setParticipantes] = useState<Participante[]>([]);
   const [plano, setPlano] = useState<PlanoAcaoItem[]>([]);
+  const [itensState, setItensState] = useState<OsSnapshotItem[]>([]);
 
   // Sincroniza o estado local sempre que os dados chegam do banco (primeira
   // carga) — depois disso, quem manda é o estado local até salvar de novo.
@@ -52,14 +53,28 @@ function ReuniaoDetalhe() {
     setPauta(reuniao.pauta ?? "");
     setParticipantes(((reuniao.participantes as any) ?? []) as Participante[]);
     setPlano((((reuniao.dados_snapshot as any)?.plano_acao ?? []) as PlanoAcaoItem[]));
+    const snap = reuniao.dados_snapshot as any;
+    const brutos: OsSnapshotItem[] = reuniao.tipo === "individual" ? [snap as OsSnapshotItem] : (snap?.itens ?? []);
+    // "observacao: '', ...it" garante que atas antigas (criadas antes desse
+    // campo existir) também funcionem, sem quebrar por causa de um valor undefined.
+    setItensState(brutos.map((it) => ({ observacao: "", ...it })));
   }, [reuniao?.id]);
+
+  const setObservacao = (osId: string, valor: string) => {
+    setItensState((prev) => prev.map((it) => (it.os_id === osId ? { ...it, observacao: valor } : it)));
+  };
 
   const finalizada = reuniao?.status === "finalizada";
   const travado = !podeEditar || finalizada;
 
   const salvar = useMutation({
     mutationFn: async (novoStatus?: "finalizada") => {
-      const dadosSnapshot = { ...(reuniao?.dados_snapshot as any), plano_acao: plano };
+      // Ata individual: dados_snapshot É o próprio item (campos soltos), então
+      // sobrescrevemos com o item editado. Ata geral: dados_snapshot tem uma
+      // chave "itens" com a lista — trocamos a lista inteira pela editada.
+      const dadosSnapshot = reuniao?.tipo === "individual"
+        ? { ...(reuniao?.dados_snapshot as any), ...itensState[0], plano_acao: plano }
+        : { ...(reuniao?.dados_snapshot as any), itens: itensState, plano_acao: plano };
       const { error } = await supabase.from("reunioes").update({
         pauta, participantes: participantes as any, dados_snapshot: dadosSnapshot as any,
         ...(novoStatus ? { status: novoStatus } : {}),
@@ -89,12 +104,7 @@ function ReuniaoDetalhe() {
   if (isLoading) return <div className="p-6 text-sm text-muted-foreground">Carregando…</div>;
   if (!reuniao) return <div className="p-6 text-sm text-muted-foreground">Ata não encontrada.</div>;
 
-  const snapshot = reuniao.dados_snapshot as any;
-  const itensBrutos: OsSnapshotItem[] = reuniao.tipo === "individual" ? [snapshot as OsSnapshotItem] : (snapshot?.itens ?? []);
-  // Ata geral: ordena pela sequência natural do fluxo da O.S. (aberta → ... →
-  // faturado), não por número de O.S. — reaproveita OS_STATUS_LIST, que já é
-  // a mesma ordem usada no dashboard/kanban, então fica consistente com o resto do sistema.
-  const itens = [...itensBrutos].sort((a, b) => OS_STATUS_LIST.indexOf(a.status) - OS_STATUS_LIST.indexOf(b.status));
+  const itens = [...itensState].sort((a, b) => OS_STATUS_LIST.indexOf(a.status) - OS_STATUS_LIST.indexOf(b.status));
 
   return (
     <div className="p-6 space-y-4 print:p-0">
@@ -163,6 +173,7 @@ function ReuniaoDetalhe() {
                     <TableHead>Status</TableHead>
                     <TableHead>Entrega prevista</TableHead>
                     <TableHead>Material</TableHead>
+                    <TableHead>Observação</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -173,6 +184,19 @@ function ReuniaoDetalhe() {
                       <TableCell><Badge variant="outline">{OS_STATUS_LABEL[it.status]}</Badge></TableCell>
                       <TableCell>{it.data_entrega_real ? `Entregue em ${formatDate(it.data_entrega_real)}` : formatDate(it.data_entrega_prev)}</TableCell>
                       <TableCell className="text-xs">{resumoMaterial(it)}</TableCell>
+                      <TableCell className="min-w-[180px]">
+                        {travado ? (
+                          <span className="text-xs whitespace-pre-wrap">{it.observacao || "—"}</span>
+                        ) : (
+                          <Textarea
+                            rows={1}
+                            className="text-xs min-h-8 py-1.5"
+                            value={it.observacao}
+                            onChange={(e) => setObservacao(it.os_id, e.target.value)}
+                            placeholder="Anotação sobre essa O.S.…"
+                          />
+                        )}
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
