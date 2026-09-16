@@ -14,7 +14,7 @@ import { AlertDialog, AlertDialogTrigger, AlertDialogContent, AlertDialogHeader,
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Plus, Users2, Search, FileText, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { formatDate, OS_STATUS_LABEL } from "@/lib/os-utils";
+import { formatDate, OS_STATUS_LABEL, OS_STATUS_LIST, type OsStatus } from "@/lib/os-utils";
 import { REUNIAO_TIPO_LABEL, REUNIAO_STATUS_LABEL, buildOsSnapshotItem, type OsSnapshotItem } from "@/lib/reuniao-utils";
 
 export const Route = createFileRoute("/_app/reunioes/")({
@@ -35,6 +35,12 @@ function ReunioesList() {
   const [busca, setBusca] = useState("");
   const [osSelecionadaId, setOsSelecionadaId] = useState<string | null>(null);
   const [titulo, setTitulo] = useState("");
+  // Ata geral: por padrão entram todos os status, menos "Faturado" (mesmo
+  // comportamento de antes). O usuário pode religar/desligar cada status aqui.
+  const [statusFiltro, setStatusFiltro] = useState<OsStatus[]>(OS_STATUS_LIST.filter((s) => s !== "faturado"));
+  // Guarda só quem foi TIRADO da seleção (em vez de quem foi marcado) — assim,
+  // por padrão, toda O.S. que passa no filtro de status já entra na ata.
+  const [excluidasGeral, setExcluidasGeral] = useState<Set<string>>(new Set());
 
   const { data: reunioes } = useQuery({
     queryKey: ["reunioes"],
@@ -53,7 +59,7 @@ function ReunioesList() {
   // do PostgREST, buscamos os clientes à parte e cruzamos abaixo, em `ordensComCliente`.
   const { data: ordensRaw } = useQuery({
     queryKey: ["ordens-para-reuniao"],
-    enabled: open && tipo === "individual",
+    enabled: open,
     queryFn: async () => {
       const { data, error } = await supabase
         .from("ordens_servico_com_acesso")
@@ -67,7 +73,7 @@ function ReunioesList() {
 
   const { data: clientesSimples } = useQuery({
     queryKey: ["clientes-simple"],
-    enabled: open && tipo === "individual",
+    enabled: open,
     queryFn: async () => (await supabase.from("clientes").select("id, nome").order("nome")).data ?? [],
   });
 
@@ -88,6 +94,36 @@ function ReunioesList() {
     ).slice(0, 30);
   }, [ordens, busca]);
 
+  // Ata geral: mesma busca por texto, mas cruzada com o filtro de status —
+  // sem o limite de 30, porque aqui é pra revisar/desmarcar a lista toda antes
+  // de gerar a ata, não só escolher uma.
+  const ordensGeralFiltradas = useMemo(() => {
+    const termo = busca.trim().toLowerCase();
+    return ordens.filter((o) => statusFiltro.includes(o.status)).filter(
+      (o) => !termo || o.numero_os.toLowerCase().includes(termo) || (o.clientes?.nome ?? "").toLowerCase().includes(termo)
+    );
+  }, [ordens, statusFiltro, busca]);
+
+  // Conjunto que realmente vai pra ata: todo status filtrado, menos quem foi
+  // desmarcado manualmente — independe da busca (a busca só esconde da tela,
+  // não tira da seleção).
+  const osGeralIncluidas = useMemo(
+    () => ordens.filter((o) => statusFiltro.includes(o.status) && !excluidasGeral.has(o.id)),
+    [ordens, statusFiltro, excluidasGeral]
+  );
+
+  const toggleStatusFiltro = (s: OsStatus) => {
+    setStatusFiltro((prev) => (prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]));
+  };
+
+  const toggleOsGeral = (id: string) => {
+    setExcluidasGeral((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
   const criar = useMutation({
     mutationFn: async () => {
       if (!titulo.trim()) throw new Error("Dê um título pra ata.");
@@ -107,29 +143,15 @@ function ReunioesList() {
         return inserted.id;
       }
 
-      // Ata geral: puxa todas as O.S. exceto as já totalmente faturadas.
-      // Mesma troca de tabela crua -> view mascarada, mas aqui buscamos os
-      // clientes em paralelo (Promise.all) porque essa mutation pode rodar
-      // sem o dialog "individual" ter aberto (aquela busca de clientes acima
-      // só liga com enabled: tipo === "individual").
-      const [{ data: todasOs, error: oErr }, { data: clientesData, error: cErr }] = await Promise.all([
-        supabase
-          .from("ordens_servico_com_acesso")
-          .select("id, numero_os, projeto, status, data_entrega_prev, data_entrega_real, cliente_id")
-          .neq("status", "faturado")
-          .order("numero_os"),
-        supabase.from("clientes").select("id, nome"),
-      ]);
-      if (oErr) throw oErr;
-      if (cErr) throw cErr;
-      const clientesPorIdGeral = new Map((clientesData ?? []).map((c) => [c.id, c.nome]));
-      const todasOsComCliente = (todasOs ?? []).map((os) => ({
-        ...os,
-        clientes: clientesPorIdGeral.has(os.cliente_id) ? { nome: clientesPorIdGeral.get(os.cliente_id)! } : null,
-      }));
-      const { data: etapas, error: eErr } = await supabase.from("os_etapas").select("os_id, tipo, data, status");
+      // Ata geral: entra quem passou no filtro de status E não foi desmarcado
+      // manualmente na lista (osGeralIncluidas, calculado a partir do mesmo
+      // `ordens` já usado pela aba "Uma O.S.", clientes já cruzados ali).
+      if (osGeralIncluidas.length === 0) throw new Error("Selecione pelo menos uma O.S.");
+      const idsIncluidos = osGeralIncluidas.map((o) => o.id);
+      const { data: etapas, error: eErr } = await supabase
+        .from("os_etapas").select("os_id, tipo, data, status").in("os_id", idsIncluidos);
       if (eErr) throw eErr;
-      const itens: OsSnapshotItem[] = todasOsComCliente.map((os) => buildOsSnapshotItem(os, etapas ?? []));
+      const itens: OsSnapshotItem[] = osGeralIncluidas.map((os) => buildOsSnapshotItem(os, etapas ?? []));
       const { data: inserted, error } = await supabase.from("reunioes").insert({
         tipo: "geral", titulo, dados_snapshot: { itens } as any,
       }).select("id").single();
@@ -166,7 +188,16 @@ function ReunioesList() {
           <p className="text-sm text-muted-foreground">Atas de reunião vinculadas às O.S.</p>
         </div>
         {podeCriar && (
-          <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) { setBusca(""); setOsSelecionadaId(null); setTitulo(""); } }}>
+          <Dialog open={open} onOpenChange={(o) => {
+            setOpen(o);
+            if (!o) {
+              setBusca("");
+              setOsSelecionadaId(null);
+              setTitulo("");
+              setExcluidasGeral(new Set());
+              setStatusFiltro(OS_STATUS_LIST.filter((s) => s !== "faturado"));
+            }
+          }}>
             <DialogTrigger asChild><Button><Plus className="h-4 w-4 mr-2" />Criar reunião</Button></DialogTrigger>
             <DialogContent className="max-w-lg">
               <DialogHeader><DialogTitle>Nova ata de reunião</DialogTitle></DialogHeader>
@@ -212,9 +243,72 @@ function ReunioesList() {
                 )}
 
                 {tipo === "geral" && (
-                  <p className="text-sm text-muted-foreground">
-                    Essa ata vai puxar automaticamente todas as O.S. com status diferente de "Faturado".
-                  </p>
+                  <div className="space-y-3">
+                    <div>
+                      <Label>Filtrar por status</Label>
+                      <div className="flex flex-wrap gap-1.5 mt-1">
+                        {OS_STATUS_LIST.map((s) => (
+                          <button
+                            key={s}
+                            type="button"
+                            onClick={() => toggleStatusFiltro(s)}
+                            className={`text-xs px-2 py-1 rounded-full border transition-colors ${
+                              statusFiltro.includes(s)
+                                ? "bg-primary text-primary-foreground border-primary"
+                                : "text-muted-foreground border-input"
+                            }`}
+                          >
+                            {OS_STATUS_LABEL[s]}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="relative">
+                      <Search className="h-4 w-4 absolute left-2.5 top-2.5 text-muted-foreground" />
+                      <Input className="pl-8" placeholder="Buscar por número da O.S. ou cliente…" value={busca} onChange={(e) => setBusca(e.target.value)} />
+                    </div>
+
+                    <div className="flex items-center justify-between text-xs text-muted-foreground">
+                      <span>{osGeralIncluidas.length} O.S. selecionada{osGeralIncluidas.length === 1 ? "" : "s"}</span>
+                      <div className="flex gap-3">
+                        <button type="button" className="underline hover:text-foreground" onClick={() => setExcluidasGeral(new Set())}>
+                          Marcar todas
+                        </button>
+                        <button
+                          type="button"
+                          className="underline hover:text-foreground"
+                          onClick={() => setExcluidasGeral((prev) => {
+                            const next = new Set(prev);
+                            ordensGeralFiltradas.forEach((o) => next.add(o.id));
+                            return next;
+                          })}
+                        >
+                          Desmarcar todas
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="border rounded-md max-h-64 overflow-y-auto divide-y">
+                      {ordensGeralFiltradas.length === 0 && (
+                        <div className="p-3 text-sm text-muted-foreground">Nenhuma O.S. encontrada com esse filtro.</div>
+                      )}
+                      {ordensGeralFiltradas.map((o) => (
+                        <label key={o.id} className="flex items-center gap-3 p-3 text-sm cursor-pointer hover:bg-muted transition-colors">
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 shrink-0 accent-primary"
+                            checked={!excluidasGeral.has(o.id)}
+                            onChange={() => toggleOsGeral(o.id)}
+                          />
+                          <div>
+                            <div className="font-medium">{o.numero_os} — {o.clientes?.nome ?? "—"}</div>
+                            <div className="text-xs text-muted-foreground">{OS_STATUS_LABEL[o.status]}{o.projeto ? ` · ${o.projeto}` : ""}</div>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
                 )}
               </div>
               <DialogFooter>
