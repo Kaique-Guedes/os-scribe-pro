@@ -1,14 +1,14 @@
 import { createFileRoute, Outlet, Link, useNavigate, useRouterState, redirect } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { useSession, useRoles, isOnlyAlmoxarifado, canEdit, canViewClientes } from "@/hooks/use-auth";
+import { useSession, useRoles, isOnlyAlmoxarifado, canEdit, canViewClientes, canUpdateStages } from "@/hooks/use-auth";
 import { ROLE_LABEL } from "@/lib/os-utils";
 import {
   Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel,
   SidebarMenu, SidebarMenuItem, SidebarMenuButton, SidebarProvider, SidebarTrigger,
   SidebarHeader, SidebarFooter,
 } from "@/components/ui/sidebar";
-import { LayoutDashboard, ClipboardList, Users, Upload, Factory, Settings, LogOut, Users2 } from "lucide-react";
+import { LayoutDashboard, ClipboardList, ClipboardCheck, Users, Upload, Factory, Settings, LogOut, Users2 } from "lucide-react";
 import { SartoriLogo } from "@/components/sartori-logo";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -27,12 +27,14 @@ export const Route = createFileRoute("/_app")({
 });
 
 // item com "restrito: true" só aparece pra quem canEdit(roles) (admin/pcp) —
-// hoje só a aba Reunião usa isso, ver RLS da tabela "reunioes".
+// ou, se tiver "check", pra quem essa função de permissão específica retornar
+// true (ex: Clientes usa canViewClientes, Acompanhamento usa canUpdateStages).
 const NAV = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { to: "/ordens", label: "Ordens de Serviço", icon: ClipboardList },
   { to: "/ordens/nova", label: "Nova O.S. (Upload)", icon: Upload },
   { to: "/producao", label: "Produção", icon: Factory },
+  { to: "/producao/acompanhamento", label: "Acompanhamento", icon: ClipboardCheck, restrito: true, check: canUpdateStages },
   { to: "/reunioes", label: "Reunião", icon: Users2, restrito: true },
   { to: "/clientes", label: "Clientes", icon: Users, restrito: true, check: canViewClientes },
   { to: "/configuracoes", label: "Configurações", icon: Settings },
@@ -40,6 +42,8 @@ const NAV = [
 
 // Almoxarifado só acessa a aba Produção + o detalhe de uma O.S. (linkado de lá).
 // Não é lista de O.S., não é Nova O.S., não é Clientes/Configurações/Dashboard.
+// Acompanhamento também fica de fora de propósito: é admin/pcp/producao,
+// almoxarifado não edita status por lá.
 function isPathAllowedForAlmoxarifado(pathname: string) {
   return pathname === "/producao" || /^\/ordens\/[^/]+$/.test(pathname);
 }
@@ -89,6 +93,18 @@ function AppLayout() {
       navigate({ to: "/dashboard", replace: true });
     }
   }, [rolesLoading, restrictedToAlmoxarifado, podeVerClientes, pathname, navigate]);
+
+  // Guard de UX pra /producao/acompanhamento (admin/pcp/producao) — a policy
+  // "acompanhamento select" (RLS) já nega a leitura de verdade pra quem não
+  // tem esse role; isso aqui só evita mostrar uma tela vazia/quebrada pra
+  // quem digitar a URL direto sem o role.
+  const podeAcompanhar = canUpdateStages(roles);
+  useEffect(() => {
+    if (rolesLoading || restrictedToAlmoxarifado || podeAcompanhar) return;
+    if (pathname.startsWith("/producao/acompanhamento")) {
+      navigate({ to: "/producao", replace: true });
+    }
+  }, [rolesLoading, restrictedToAlmoxarifado, podeAcompanhar, pathname, navigate]);
 
   const visibleNav = restrictedToAlmoxarifado
     ? NAV.filter((item) => item.to === "/producao")
