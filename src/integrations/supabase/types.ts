@@ -93,11 +93,44 @@ export type Database = {
         };
         Relationships: [];
       };
+      cliente_emails: {
+        Row: {
+          id: string;
+          cliente_id: string;
+          email: string;
+          rotulo: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          cliente_id: string;
+          email: string;
+          rotulo?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          cliente_id?: string;
+          email?: string;
+          rotulo?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "cliente_emails_cliente_id_fkey";
+            columns: ["cliente_id"];
+            isOneToOne: false;
+            referencedRelation: "clientes";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
       ordens_servico: {
         Row: {
           id: string;
           numero_os: string;
           cliente_id: string | null;
+          email_contato_id: string | null;
           solicitante: string | null;
           numero_ss: string | null;
           numero_pedido: string | null;
@@ -132,6 +165,7 @@ export type Database = {
           id?: string;
           numero_os: string;
           cliente_id?: string | null;
+          email_contato_id?: string | null;
           solicitante?: string | null;
           numero_ss?: string | null;
           numero_pedido?: string | null;
@@ -165,6 +199,7 @@ export type Database = {
           id?: string;
           numero_os?: string;
           cliente_id?: string | null;
+          email_contato_id?: string | null;
           solicitante?: string | null;
           numero_ss?: string | null;
           numero_pedido?: string | null;
@@ -200,6 +235,13 @@ export type Database = {
             columns: ["cliente_id"];
             isOneToOne: false;
             referencedRelation: "clientes";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "ordens_servico_email_contato_id_fkey";
+            columns: ["email_contato_id"];
+            isOneToOne: false;
+            referencedRelation: "cliente_emails";
             referencedColumns: ["id"];
           },
           {
@@ -792,6 +834,7 @@ export type Database = {
           id: string;
           numero_os: string;
           cliente_id: string | null;
+          email_contato_id: string | null;
           solicitante: string | null;
           numero_ss: string | null;
           numero_pedido: string | null;
