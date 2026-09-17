@@ -131,7 +131,17 @@ export const concluirConferencia = createServerFn({ method: "POST" })
 
     const todasConcluidas = (todasConferencias ?? []).every((c) => c.status === "concluida");
     if (todasConcluidas) {
-      await context.supabase
+      // Usa o client admin (bypassa RLS) de propósito, nos dois updates abaixo:
+      // quem dispara essa mudança é o SISTEMA reagindo à conferência concluída,
+      // não uma edição livre do usuário — o almoxarifado não tem (e não deve
+      // ter) permissão de UPDATE direto em os_etapas/ordens_servico via RLS.
+      // Corrigido em 17/09/2026: o update de os_etapas usava context.supabase
+      // (client do próprio usuário) — pra uma conta só-almoxarifado, a policy
+      // "etapas write" (admin/pcp/producao) bloqueava esse update, deixando a
+      // etapa "chegada_material" presa em "pendente" mesmo com a conferência
+      // 100% concluída, sem erro nenhum aparecendo na tela.
+      const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+      await supabaseAdmin
         .from("os_etapas")
         .update({ status: "concluido", data: new Date().toISOString().slice(0, 10) })
         .eq("os_id", conferencia.os_id)
@@ -141,10 +151,6 @@ export const concluirConferencia = createServerFn({ method: "POST" })
       // Guard com .in(): só troca se ainda estiver em "aberta"/"aguardando_material" —
       // não sobrescreve um status que já avançou manualmente (em_pintura, entregue,
       // atrasada, cancelada etc.), pra não "voltar" uma O.S. que já passou dessa fase.
-      // Usa o client admin (bypassa RLS) de propósito: quem dispara essa mudança é o
-      // SISTEMA reagindo à conferência concluída, não uma edição livre do usuário —
-      // o almoxarifado não tem (e não deve ter) permissão de UPDATE em ordens_servico.
-      const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
       await supabaseAdmin
         .from("ordens_servico")
         .update({ status: "em_producao" })
