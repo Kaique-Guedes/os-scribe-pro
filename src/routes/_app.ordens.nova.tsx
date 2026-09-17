@@ -37,6 +37,22 @@ function NovaOsPage() {
     queryFn: async () => (await supabase.from("clientes").select("id, nome").order("nome")).data ?? [],
   });
 
+  // E-mails cadastrados do cliente escolhido — refaz a busca sempre que o
+  // cliente muda. É a lista que alimenta o Select de "e-mail de contato" logo
+  // abaixo do campo Cliente.
+  const { data: emailsCliente } = useQuery({
+    queryKey: ["cliente-emails", form.cliente_id],
+    queryFn: async () =>
+      (
+        await supabase
+          .from("cliente_emails")
+          .select("id, email, rotulo")
+          .eq("cliente_id", form.cliente_id as string)
+          .order("created_at")
+      ).data ?? [],
+    enabled: !!form.cliente_id,
+  });
+
   const set = <K extends keyof FormState>(k: K, v: FormState[K]) => setForm(f => ({ ...f, [k]: v }));
 
   async function handleFileUpload(file: File) {
@@ -106,6 +122,7 @@ function NovaOsPage() {
       const payload: TablesInsert<"ordens_servico"> = {
         numero_os: form.numero_os!,
         cliente_id,
+        email_contato_id: form.email_contato_id ?? null,
         solicitante: form.solicitante ?? null,
         numero_ss: form.numero_ss ?? null,
         numero_pedido: form.numero_pedido ?? null,
@@ -179,7 +196,10 @@ function NovaOsPage() {
 
           <Section title="Cliente e responsáveis">
             <Field label="Cliente">
-              <Select value={form.cliente_id ?? ""} onValueChange={v => set("cliente_id", v)}>
+              <Select
+                value={form.cliente_id ?? ""}
+                onValueChange={v => setForm(f => ({ ...f, cliente_id: v, email_contato_id: null }))}
+              >
                 <SelectTrigger><SelectValue placeholder="Selecionar cliente existente" /></SelectTrigger>
                 <SelectContent>
                   {(clientes ?? []).map(c => <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>)}
@@ -187,6 +207,32 @@ function NovaOsPage() {
               </Select>
             </Field>
             <Field label="Ou cadastrar novo cliente"><Input value={novoCliente} onChange={e => setNovoCliente(e.target.value)} placeholder="Nome do novo cliente" /></Field>
+            <Field label="E-mail de contato desta O.S.">
+              <Select
+                value={form.email_contato_id ?? ""}
+                onValueChange={v => set("email_contato_id", v)}
+                disabled={!form.cliente_id || (emailsCliente ?? []).length === 0}
+              >
+                <SelectTrigger>
+                  <SelectValue
+                    placeholder={
+                      !form.cliente_id
+                        ? "Selecione o cliente primeiro"
+                        : (emailsCliente ?? []).length === 0
+                          ? "Cliente sem e-mail cadastrado"
+                          : "Selecionar e-mail"
+                    }
+                  />
+                </SelectTrigger>
+                <SelectContent>
+                  {(emailsCliente ?? []).map(e => (
+                    <SelectItem key={e.id} value={e.id}>
+                      {e.rotulo ? `${e.email} (${e.rotulo})` : e.email}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
             <Field label="Solicitante / contato"><Input value={form.solicitante ?? ""} onChange={e => set("solicitante", e.target.value)} /></Field>
             <Field label="Gestor(a) responsável"><Input value={form.gestor ?? ""} onChange={e => set("gestor", e.target.value)} /></Field>
             <Field label="Orçamentista"><Input value={form.orcamentista ?? ""} onChange={e => set("orcamentista", e.target.value)} /></Field>
