@@ -39,13 +39,16 @@ export const enviarPesquisaSatisfacao = createServerFn({ method: "POST" })
       .eq("id", data.osId)
       .eq("status", "faturado")
       .is("pesquisa_satisfacao_enviada_em", null)
-      .select("numero_os, numero_pedido, clientes(email)")
+      .select("numero_os, numero_pedido, clientes(email), cliente_emails(email)")
       .maybeSingle();
     if (error) throw new Error(error.message);
     if (!os) return { enviado: false }; // não estava faturado, ou já tinha enviado antes
 
     const numeroPedido = os.numero_pedido || os.numero_os;
-    const emailCliente = os.clientes?.email;
+    // Prioridade: e-mail escolhido especificamente pra essa O.S.
+    // (email_contato_id, embed "cliente_emails"). Se a O.S. é antiga e não
+    // tem esse campo preenchido, cai pro e-mail único legado do cliente.
+    const emailCliente = os.cliente_emails?.email || os.clientes?.email;
     const destinatarios = [...new Set([...(emailCliente ? [emailCliente] : []), ...DESTINATARIOS_INTERNOS])];
 
     const html = `
