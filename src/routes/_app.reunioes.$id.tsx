@@ -281,7 +281,7 @@ function ReuniaoDetalhe() {
             </div>
             <div className="grid sm:grid-cols-2 gap-4">
               {participantes.map((p, i) => (
-                <div key={i} className="border rounded-md p-3 space-y-2">
+                <div key={i} className="border rounded-md p-3 space-y-2 print-avoid-break">
                   {travado ? (
                     <div className="text-sm font-medium">{p.nome}{p.cargo ? ` — ${p.cargo}` : ""}</div>
                   ) : (
@@ -302,6 +302,9 @@ function ReuniaoDetalhe() {
           </section>
 
         </CardContent>
+        <div className="hidden print:block border-t px-6 py-3 text-xs text-muted-foreground">
+          Gerado em {new Date().toLocaleString("pt-BR")} · Sartori Group
+        </div>
       </Card>
     </div>
   );
