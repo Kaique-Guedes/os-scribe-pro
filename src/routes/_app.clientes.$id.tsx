@@ -35,7 +35,7 @@ import {
   type OsStatus,
 } from "@/lib/os-utils";
 import { toast } from "sonner";
-import { ArrowLeft, Wallet, ClipboardList, TrendingUp, Pencil, Trash2 } from "lucide-react";
+import { ArrowLeft, Wallet, ClipboardList, TrendingUp, Pencil, Trash2, Mail, Plus } from "lucide-react";
 
 export const Route = createFileRoute("/_app/clientes/$id")({
   head: () => ({ meta: [{ title: "Cliente — Sartori Group" }] }),
@@ -82,6 +82,57 @@ function ClienteDetail() {
   const leadMedio = leadTimes.length
     ? Math.round(leadTimes.reduce((a, b) => a + b, 0) / leadTimes.length)
     : null;
+
+  // ---- E-mails de contato do cliente ----
+  // Um cliente pode ter vários e-mails (financeiro, comprador, diretoria...).
+  // Cada O.S. escolhe um desses e-mails pra receber a pesquisa de satisfação
+  // (campo ordens_servico.email_contato_id) — ver _app.ordens.nova.tsx e
+  // _app.ordens.$id.tsx.
+  const { data: emails } = useQuery({
+    queryKey: ["cliente-emails", id],
+    queryFn: async () =>
+      (
+        await supabase
+          .from("cliente_emails")
+          .select("*")
+          .eq("cliente_id", id)
+          .order("created_at")
+      ).data ?? [],
+  });
+  const [novoEmail, setNovoEmail] = useState("");
+  const [novoRotulo, setNovoRotulo] = useState("");
+
+  const addEmail = useMutation({
+    mutationFn: async () => {
+      if (!novoEmail.trim()) throw new Error("Informe o e-mail");
+      const { error } = await supabase
+        .from("cliente_emails")
+        .insert({ cliente_id: id, email: novoEmail.trim(), rotulo: novoRotulo.trim() || null });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      setNovoEmail("");
+      setNovoRotulo("");
+      qc.invalidateQueries({ queryKey: ["cliente-emails", id] });
+      toast.success("E-mail adicionado.");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const removeEmail = useMutation({
+    mutationFn: async (emailId: string) => {
+      const { error } = await supabase.from("cliente_emails").delete().eq("id", emailId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      // O.S. que apontava pra esse e-mail (email_contato_id) volta pra NULL
+      // sozinha (ON DELETE SET NULL na migration) — não quebra a O.S., só
+      // deixa de ter um e-mail específico escolhido (usa o fallback).
+      qc.invalidateQueries({ queryKey: ["cliente-emails", id] });
+      toast.success("E-mail removido.");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
 
   // ---- Edição dos dados do cliente ----
   const [editOpen, setEditOpen] = useState(false);
@@ -208,12 +259,16 @@ function ClienteDetail() {
                     />
                   </div>
                   <div>
-                    <Label>E-mail</Label>
+                    <Label>E-mail principal (legado)</Label>
                     <Input
                       type="email"
                       value={form.email ?? ""}
                       onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
                     />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Usado só como reserva para O.S. antigas sem e-mail específico. Cadastre os
+                      e-mails reais na seção "E-mails de contato" abaixo.
+                    </p>
                   </div>
                   <div>
                     <Label>Telefone</Label>
@@ -266,6 +321,62 @@ function ClienteDetail() {
           tone={leadMedio != null && leadMedio > 0 ? "danger" : "success"}
         />
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base flex items-center gap-2">
+            <Mail className="h-4 w-4" />
+            E-mails de contato
+          </CardTitle>
+          <CardDescription>
+            Cadastre um e-mail por pessoa/setor do cliente. Ao criar uma O.S., você escolhe qual
+            desses e-mails é o dela — é pra ele que vai a pesquisa de satisfação.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {(emails ?? []).length === 0 && (
+            <p className="text-sm text-muted-foreground">Nenhum e-mail cadastrado ainda.</p>
+          )}
+          {(emails ?? []).map((e) => (
+            <div key={e.id} className="flex items-center justify-between gap-3 rounded-md border p-2.5">
+              <div className="min-w-0">
+                <p className="text-sm font-medium truncate">{e.email}</p>
+                {e.rotulo && <p className="text-xs text-muted-foreground">{e.rotulo}</p>}
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-destructive hover:text-destructive shrink-0"
+                disabled={removeEmail.isPending}
+                onClick={() => {
+                  if (confirm(`Remover o e-mail "${e.email}"?`)) removeEmail.mutate(e.id);
+                }}
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            </div>
+          ))}
+          <div className="flex flex-col sm:flex-row gap-2 pt-2 border-t">
+            <Input
+              type="email"
+              placeholder="novo@cliente.com"
+              value={novoEmail}
+              onChange={(e) => setNovoEmail(e.target.value)}
+              className="sm:flex-1"
+            />
+            <Input
+              placeholder="Rótulo (opcional): Financeiro, Comprador..."
+              value={novoRotulo}
+              onChange={(e) => setNovoRotulo(e.target.value)}
+              className="sm:flex-1"
+            />
+            <Button disabled={addEmail.isPending} onClick={() => addEmail.mutate()} className="gap-1.5 shrink-0">
+              <Plus className="h-4 w-4" />
+              Adicionar
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>
