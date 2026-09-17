@@ -639,6 +639,22 @@ function OsDetail() {
 
   const merged = { ...(os ?? {}), ...edit };
 
+  // E-mails do cliente atual (considera troca de cliente ainda não salva no
+  // formulário) — alimenta o Select de "e-mail de contato" mais abaixo.
+  const clienteIdForm = (merged as { cliente_id?: string | null }).cliente_id ?? null;
+  const { data: emailsCliente } = useQuery({
+    queryKey: ["cliente-emails", clienteIdForm],
+    queryFn: async () =>
+      (
+        await supabase
+          .from("cliente_emails")
+          .select("id, email, rotulo")
+          .eq("cliente_id", clienteIdForm as string)
+          .order("created_at")
+      ).data ?? [],
+    enabled: !!clienteIdForm,
+  });
+
   const save = useMutation({
     mutationFn: async () => {
       if (Object.keys(edit).length === 0) return;
@@ -1273,7 +1289,12 @@ function OsDetail() {
                 <Field label="Cliente">
                   <Select
                     value={String(val("cliente_id") ?? "")}
-                    onValueChange={(v) => setField("cliente_id", v)}
+                    onValueChange={(v) => {
+                      setField("cliente_id", v);
+                      // Trocou de cliente: o e-mail escolhido antes pertence
+                      // ao cliente antigo, não faz sentido manter.
+                      setField("email_contato_id", null);
+                    }}
                   >
                     <SelectTrigger>
                       <SelectValue />
@@ -1282,6 +1303,30 @@ function OsDetail() {
                       {(clientes ?? []).map((c) => (
                         <SelectItem key={c.id} value={c.id}>
                           {c.nome}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+                <Field label="E-mail de contato desta O.S.">
+                  <Select
+                    value={String(val("email_contato_id") ?? "")}
+                    onValueChange={(v) => setField("email_contato_id", v)}
+                    disabled={(emailsCliente ?? []).length === 0}
+                  >
+                    <SelectTrigger>
+                      <SelectValue
+                        placeholder={
+                          (emailsCliente ?? []).length === 0
+                            ? "Cliente sem e-mail cadastrado"
+                            : "Selecionar e-mail"
+                        }
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(emailsCliente ?? []).map((e) => (
+                        <SelectItem key={e.id} value={e.id}>
+                          {e.rotulo ? `${e.email} (${e.rotulo})` : e.email}
                         </SelectItem>
                       ))}
                     </SelectContent>
