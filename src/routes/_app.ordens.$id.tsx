@@ -1185,7 +1185,7 @@ function OsDetail() {
   const val = (k: string) => (merged as Record<string, unknown>)[k];
 
   return (
-    <div className="p-6 max-w-6xl mx-auto space-y-5">
+    <div className="p-6 max-w-6xl xl:max-w-[1400px] mx-auto space-y-5">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="sm" onClick={voltarParaLista}>
@@ -1273,7 +1273,7 @@ function OsDetail() {
         )}
       </div>
 
-      <div className={restrito ? "max-w-2xl mx-auto" : "grid gap-5 lg:grid-cols-[1fr_320px]"}>
+      <div className={restrito ? "max-w-2xl mx-auto" : "grid gap-5 lg:grid-cols-[1fr_320px] xl:grid-cols-[1fr_620px]"}>
         {!restrito && (
         <div className="space-y-5">
           <Card>
@@ -1494,8 +1494,8 @@ function OsDetail() {
         </div>
           )}
 
-        <div className="space-y-5">
-          <Card>
+        <div className={restrito ? "space-y-5" : "space-y-5 xl:grid xl:grid-cols-2 xl:gap-5 xl:space-y-0 xl:items-start"}>
+          <Card className={restrito ? undefined : "xl:col-span-2"}>
             <CardHeader>
               <CardTitle className="text-base">Timeline de produção</CardTitle>
               <CardDescription>Marcos do ciclo de vida da O.S.</CardDescription>
