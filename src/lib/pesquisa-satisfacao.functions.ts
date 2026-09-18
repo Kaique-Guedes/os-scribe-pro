@@ -33,16 +33,21 @@ export const enviarPesquisaSatisfacao = createServerFn({ method: "POST" })
     // Checar status=faturado e depois enviar em dois passos separados teria
     // uma condição de corrida (race condition); fazer os dois no mesmo UPDATE
     // fecha essa brecha.
+    // `pesquisa_satisfacao_desativada` é o opt-out por O.S. (ver Dados
+    // gerais na tela de detalhe) — checado na mesma cláusula, então uma O.S.
+    // desativada nunca passa desse UPDATE, não importa quantas vezes essa
+    // função seja chamada.
     const { data: os, error } = await supabaseAdmin
       .from("ordens_servico")
       .update({ pesquisa_satisfacao_enviada_em: new Date().toISOString() })
       .eq("id", data.osId)
       .eq("status", "faturado")
+      .eq("pesquisa_satisfacao_desativada", false)
       .is("pesquisa_satisfacao_enviada_em", null)
       .select("numero_os, numero_pedido, clientes(email), cliente_emails(email)")
       .maybeSingle();
     if (error) throw new Error(error.message);
-    if (!os) return { enviado: false }; // não estava faturado, ou já tinha enviado antes
+    if (!os) return { enviado: false }; // não estava faturado, já tinha enviado, ou está desativada pra essa O.S.
 
     const numeroPedido = os.numero_pedido || os.numero_os;
     // Prioridade: e-mail escolhido especificamente pra essa O.S.
