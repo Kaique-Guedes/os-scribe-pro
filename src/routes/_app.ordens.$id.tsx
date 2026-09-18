@@ -15,7 +15,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
 import {
   Dialog,
   DialogContent,
@@ -56,7 +56,6 @@ import {
   ArrowLeft,
   CheckCircle2,
   Circle,
-  MessageSquare,
   AlertTriangle,
   Save,
   Paperclip,
@@ -134,24 +133,6 @@ function OsDetail() {
   const { data: etapas } = useQuery({
     queryKey: ["os-etapas", id],
     queryFn: async () => (await supabase.from("os_etapas").select("*").eq("os_id", id)).data ?? [],
-  });
-  const { data: comentarios } = useQuery({
-    queryKey: ["os-comentarios", id],
-    queryFn: async () => {
-      const { data: rows } = await supabase
-        .from("os_comentarios")
-        .select("*")
-        .eq("os_id", id)
-        .order("created_at", { ascending: false });
-      const list = rows ?? [];
-      const ids = Array.from(new Set(list.map((c) => c.user_id)));
-      const profilesMap = new Map<string, string>();
-      if (ids.length) {
-        const { data: profs } = await supabase.from("profiles").select("id, nome").in("id", ids);
-        (profs ?? []).forEach((p) => profilesMap.set(p.id, p.nome));
-      }
-      return list.map((c) => ({ ...c, autor: profilesMap.get(c.user_id) ?? "Usuário" }));
-    },
   });
   const { data: clientes } = useQuery({
     queryKey: ["clientes-simple"],
@@ -1145,22 +1126,6 @@ function OsDetail() {
     win.print();
   }
 
-  const [novoComentario, setNovoComentario] = useState("");
-  const addComentario = useMutation({
-    mutationFn: async () => {
-      if (!novoComentario.trim() || !user) return;
-      const { error } = await supabase
-        .from("os_comentarios")
-        .insert({ os_id: id, user_id: user.id, texto: novoComentario.trim() });
-      if (error) throw error;
-    },
-    onSuccess: () => {
-      setNovoComentario("");
-      qc.invalidateQueries({ queryKey: ["os-comentarios", id] });
-    },
-    onError: (e: Error) => toast.error(e.message),
-  });
-
   const removeOs = useMutation({
     mutationFn: async () => {
       const { error } = await supabase.from("ordens_servico").delete().eq("id", id);
@@ -1353,6 +1318,19 @@ function OsDetail() {
                       ))}
                     </SelectContent>
                   </Select>
+                </Field>
+                <Field label="Pesquisa de satisfação automática">
+                  <div className="flex items-center gap-2 h-9">
+                    <Switch
+                      checked={!(val("pesquisa_satisfacao_desativada") ?? false)}
+                      onCheckedChange={(checked) => setField("pesquisa_satisfacao_desativada", !checked)}
+                    />
+                    <span className="text-sm text-muted-foreground">
+                      {val("pesquisa_satisfacao_desativada")
+                        ? "Desativada pra esta O.S."
+                        : "Envia ao atingir status Faturado"}
+                    </span>
+                  </div>
                 </Field>
                 <Field label="Solicitante">
                   <Input
@@ -1819,49 +1797,6 @@ function OsDetail() {
               })}
             </CardContent>
           </Card>
-
-          {!restrito && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base flex items-center gap-2">
-                <MessageSquare className="h-4 w-4" />
-                Comentários
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <Textarea
-                rows={2}
-                placeholder="Adicione um comentário..."
-                value={novoComentario}
-                onChange={(e) => setNovoComentario(e.target.value)}
-              />
-              <div className="flex justify-end">
-                <Button
-                  size="sm"
-                  disabled={!novoComentario.trim() || addComentario.isPending}
-                  onClick={() => addComentario.mutate()}
-                >
-                  Publicar
-                </Button>
-              </div>
-              <Separator />
-              <ul className="space-y-3 max-h-80 overflow-auto pr-1">
-                {(comentarios ?? []).length === 0 && (
-                  <li className="text-sm text-muted-foreground">Nenhum comentário ainda.</li>
-                )}
-                {(comentarios ?? []).map((c) => (
-                  <li key={c.id} className="text-sm">
-                    <div className="flex justify-between text-xs text-muted-foreground mb-0.5">
-                      <span className="font-medium text-foreground">{c.autor}</span>
-                      <span>{new Date(c.created_at).toLocaleString("pt-BR")}</span>
-                    </div>
-                    <p className="whitespace-pre-wrap">{c.texto}</p>
-                  </li>
-                ))}
-              </ul>
-            </CardContent>
-          </Card>
-          )}
 
           {!restrito && (
           <Card>
