@@ -1473,7 +1473,7 @@ function OsDetail() {
           )}
 
         <div className={restrito ? "space-y-5" : "space-y-5 xl:grid xl:grid-cols-2 xl:gap-5 xl:space-y-0 xl:items-start"}>
-          <Card className={restrito ? undefined : "xl:col-span-2"}>
+          <Card>
             <CardHeader>
               <CardTitle className="text-base">Timeline de produção</CardTitle>
               <CardDescription>Marcos do ciclo de vida da O.S.</CardDescription>
@@ -1797,6 +1797,49 @@ function OsDetail() {
               })}
             </CardContent>
           </Card>
+
+          {canUpdateStages(roles) && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base flex items-center gap-2">
+                <ClipboardCheck className="h-4 w-4" />
+                Acompanhamento de produção
+              </CardTitle>
+              <CardDescription>
+                Observações lançadas na tela de Acompanhamento (só leitura aqui —{" "}
+                <Link to="/producao/acompanhamento" className="underline">
+                  lance uma nova por lá
+                </Link>
+                ).
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ul className="space-y-3 max-h-96 overflow-auto pr-1">
+                {(acompanhamentoProducao ?? []).length === 0 && (
+                  <li className="text-sm text-muted-foreground">Sem observação registrada ainda.</li>
+                )}
+                {(acompanhamentoProducao ?? []).map((a) => (
+                  <li key={a.id} className="text-xs border-l-2 border-primary/30 pl-3">
+                    <div className="text-muted-foreground">
+                      {new Date(a.criado_em).toLocaleString("pt-BR")}
+                    </div>
+                    {a.observacao && (
+                      <div className="text-foreground mt-0.5">{a.observacao}</div>
+                    )}
+                    {a.status_novo && a.status_novo !== a.status_anterior && (
+                      <div className="text-muted-foreground mt-0.5">
+                        Status: {a.status_anterior ? OS_STATUS_LABEL[a.status_anterior] : "—"} →{" "}
+                        <span className="text-foreground font-medium">
+                          {OS_STATUS_LABEL[a.status_novo]}
+                        </span>
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </CardContent>
+          </Card>
+          )}
 
           {!restrito && (
           <Card>
@@ -2331,48 +2374,6 @@ function OsDetail() {
           </Card>
           )}
 
-          {canUpdateStages(roles) && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base flex items-center gap-2">
-                <ClipboardCheck className="h-4 w-4" />
-                Acompanhamento de produção
-              </CardTitle>
-              <CardDescription>
-                Observações lançadas na tela de Acompanhamento (só leitura aqui —{" "}
-                <Link to="/producao/acompanhamento" className="underline">
-                  lance uma nova por lá
-                </Link>
-                ).
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <ul className="space-y-3 max-h-96 overflow-auto pr-1">
-                {(acompanhamentoProducao ?? []).length === 0 && (
-                  <li className="text-sm text-muted-foreground">Sem observação registrada ainda.</li>
-                )}
-                {(acompanhamentoProducao ?? []).map((a) => (
-                  <li key={a.id} className="text-xs border-l-2 border-primary/30 pl-3">
-                    <div className="text-muted-foreground">
-                      {new Date(a.criado_em).toLocaleString("pt-BR")}
-                    </div>
-                    {a.observacao && (
-                      <div className="text-foreground mt-0.5">{a.observacao}</div>
-                    )}
-                    {a.status_novo && a.status_novo !== a.status_anterior && (
-                      <div className="text-muted-foreground mt-0.5">
-                        Status: {a.status_anterior ? OS_STATUS_LABEL[a.status_anterior] : "—"} →{" "}
-                        <span className="text-foreground font-medium">
-                          {OS_STATUS_LABEL[a.status_novo]}
-                        </span>
-                      </div>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </CardContent>
-          </Card>
-          )}
         </div>
       </div>
 
