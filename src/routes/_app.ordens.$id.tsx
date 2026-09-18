@@ -73,6 +73,7 @@ import {
   Printer,
   Sparkles,
   CalendarClock,
+  ClipboardCheck,
 } from "lucide-react";
 import { useSession, useRoles, canEditEtapa, isOnlyAlmoxarifado, isAdmin, canUpdateStages, canDownloadAnexos } from "@/hooks/use-auth";
 
@@ -229,6 +230,27 @@ function OsDetail() {
         autor: h.user_id ? (map.get(h.user_id) ?? "Usuário") : "Sistema",
       }));
     },
+  });
+
+  // Espelho, só leitura, do que foi lançado na tela "Acompanhamento" de
+  // Produção (_app.producao.acompanhamento.tsx) pra esta O.S. específica.
+  // A tabela é append-only (cada registro é uma linha nova, nunca um
+  // update) — quem lança continua sendo aquela tela, não esta. `enabled`
+  // usa a mesma regra (canUpdateStages) que já trava a leitura dessa
+  // tabela no banco via RLS, pra não gastar uma query que o Supabase
+  // recusaria de qualquer forma pra viewer/almoxarifado.
+  const { data: acompanhamentoProducao } = useQuery({
+    queryKey: ["os-acompanhamento-producao", id],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("os_acompanhamento_producao")
+        .select("id, observacao, status_anterior, status_novo, criado_em")
+        .eq("os_id", id)
+        .order("criado_em", { ascending: false });
+      if (error) throw error;
+      return data ?? [];
+    },
+    enabled: canUpdateStages(roles),
   });
 
   const fileRef = useRef<HTMLInputElement>(null);
@@ -2366,6 +2388,49 @@ function OsDetail() {
                           );
                         })}
                       </ul>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </CardContent>
+          </Card>
+          )}
+
+          {canUpdateStages(roles) && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base flex items-center gap-2">
+                <ClipboardCheck className="h-4 w-4" />
+                Acompanhamento de produção
+              </CardTitle>
+              <CardDescription>
+                Observações lançadas na tela de Acompanhamento (só leitura aqui —{" "}
+                <Link to="/producao/acompanhamento" className="underline">
+                  lance uma nova por lá
+                </Link>
+                ).
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ul className="space-y-3 max-h-96 overflow-auto pr-1">
+                {(acompanhamentoProducao ?? []).length === 0 && (
+                  <li className="text-sm text-muted-foreground">Sem observação registrada ainda.</li>
+                )}
+                {(acompanhamentoProducao ?? []).map((a) => (
+                  <li key={a.id} className="text-xs border-l-2 border-primary/30 pl-3">
+                    <div className="text-muted-foreground">
+                      {new Date(a.criado_em).toLocaleString("pt-BR")}
+                    </div>
+                    {a.observacao && (
+                      <div className="text-foreground mt-0.5">{a.observacao}</div>
+                    )}
+                    {a.status_novo && a.status_novo !== a.status_anterior && (
+                      <div className="text-muted-foreground mt-0.5">
+                        Status: {a.status_anterior ? OS_STATUS_LABEL[a.status_anterior] : "—"} →{" "}
+                        <span className="text-foreground font-medium">
+                          {OS_STATUS_LABEL[a.status_novo]}
+                        </span>
+                      </div>
                     )}
                   </li>
                 ))}
