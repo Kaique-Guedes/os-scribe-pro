@@ -160,6 +160,7 @@ export type Database = {
           nota_fiscal_anexo_id: string | null;
           pesquisa_satisfacao_enviada_em: string | null;
           aviso_prazo_enviado_em: string | null;
+          pesquisa_satisfacao_desativada: boolean;
         };
         Insert: {
           id?: string;
@@ -194,6 +195,7 @@ export type Database = {
           nota_fiscal_anexo_id?: string | null;
           pesquisa_satisfacao_enviada_em?: string | null;
           aviso_prazo_enviado_em?: string | null;
+          pesquisa_satisfacao_desativada?: boolean;
         };
         Update: {
           id?: string;
@@ -228,6 +230,7 @@ export type Database = {
           nota_fiscal_anexo_id?: string | null;
           pesquisa_satisfacao_enviada_em?: string | null;
           aviso_prazo_enviado_em?: string | null;
+          pesquisa_satisfacao_desativada?: boolean;
         };
         Relationships: [
           {
@@ -863,6 +866,7 @@ export type Database = {
           nota_fiscal_anexo_id: string | null;
           pesquisa_satisfacao_enviada_em: string | null;
           aviso_prazo_enviado_em: string | null;
+          pesquisa_satisfacao_desativada: boolean;
         };
         Insert: never;
         Update: never;
